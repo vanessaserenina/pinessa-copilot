@@ -116,13 +116,28 @@ def test_duplicate_and_missing_numbers_are_reported():
 
 
 def test_children_inherit_group_options():
-    result = parse("1. Stirrer (logo / non logo / custom design)\nStirrer kayu\nStirrer logo / non logo\n")
+    result = parse("1. Stirrer (logo / non logo / custom design)\nStirrer kayu\nStirrer plastik\n")
     kayu = family(result, "MND-STIRRER-KAYU")
     assert len(kayu.products) == 3
     assert kayu.is_custom_allowed is True
-    assert codes(result) == ["SLASH_IN_NAME"]
-    assert "MND-STIRRER" not in {f.code for f in result.families}  # the group itself is not a family
+    assert codes(result) == []
     assert next(c for c in result.categories if c.code == "MND-STIRRER").name == "Stirrer"
+
+
+def test_confirmed_line_override_for_stirrer_logo_non_logo():
+    result = parse("1. Stirrer (logo / non logo / custom design)\nStirrer logo / non logo\n")
+    fam = family(result, "MND-STIRRER")
+    assert fam.name == "Stirrer"
+    assert fam.option_groups == {"branding": ["logo", "non_logo"]}
+    assert {p.sku for p in fam.products} == {"MND-STIRRER-LOGO", "MND-STIRRER-NLOGO"}
+    assert fam.is_custom_allowed is False
+    assert "Stirrer logo / non logo" in fam.source_label
+    assert codes(result) == []
+
+
+def test_unconfirmed_slash_in_name_still_warns():
+    result = parse("1. Sabun\nSabun mandi / cuci\n")
+    assert codes(result) == ["SLASH_IN_NAME"]
 
 
 def test_child_options_override_group_options():
@@ -216,12 +231,11 @@ def test_real_file_matches_hand_count():
     assert len([c for c in result.categories if c.parent_code is None]) == 8
     assert len(result.categories) == 77
     assert len(result.families) == 106
-    assert len(result.products) == 397
+    assert len(result.products) == 396
     assert sorted({i.code for i in result.issues}) == [
         "DUPLICATE_NUMBER",
         "NOTE_IN_PARENTHESES",
         "NUMBER_GAP",
-        "SLASH_IN_NAME",
         "UNNUMBERED_ITEM",
     ]
-    assert len(result.issues) == 5
+    assert len(result.issues) == 4

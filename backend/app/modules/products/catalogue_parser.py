@@ -32,7 +32,12 @@ DEFAULT_SECTION_PREFIXES: dict[str, str] = {
 
 # Order in which option groups appear in SKU suffixes (unknown keys go last).
 OPTION_ORDER = ["size", "packaging", "finishing", "branding"]
-
+# Lines whose meaning has been confirmed by the business owner. The key is the
+# original line in lower case; the value is (family name, options for that line).
+# The options replace the group's options of the same kind.
+LINE_OVERRIDES: dict[str, tuple[str, dict[str, list[str]]]] = {
+    "stirrer logo / non logo": ("Stirrer", {"branding": ["logo", "non_logo"]}),
+}
 VALUE_ALIASES = {"nonpackaging": "non_packaging", "nonlogo": "non_logo"}
 PACKAGING_VALUES = {"packaging", "non_packaging"}
 BRANDING_VALUES = {
@@ -397,8 +402,13 @@ class _Parser:
             self._build_family(section, group.category_code, group.name, group.options, group.raw, group.line_no)
             return
         for text, line_no in group.children:
-            name, parens = self._split_name(text, line_no)
-            options = {**group.options, **self._read_parentheses(parens, line_no)}
+            override = LINE_OVERRIDES.get(text.lower())
+            if override is not None:
+                name, own_options = override
+                options = {**group.options, **{k: list(v) for k, v in own_options.items()}}
+            else:
+                name, parens = self._split_name(text, line_no)
+                options = {**group.options, **self._read_parentheses(parens, line_no)}
             self._build_family(section, group.category_code, name, options, f"{group.raw} > {text}", line_no)
 
     # ---- families and products ------------------------------------------
