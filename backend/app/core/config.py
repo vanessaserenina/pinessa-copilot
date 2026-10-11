@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/app/core/config.py -> project root is 3 levels above "core"
@@ -15,6 +16,18 @@ class Settings(BaseSettings):
     postgres_db: str
     postgres_host: str = "localhost"
     postgres_port: int = 5432
+
+    jwt_secret_key: str
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 60
+    dev_seed_password: str | None = None
+
+    @field_validator("jwt_secret_key")
+    @classmethod
+    def secret_must_be_real(cls, value: str) -> str:
+        if len(value) < 32 or value.startswith("replace_with"):
+            raise ValueError("JWT_SECRET_KEY must be a random string of at least 32 characters")
+        return value
 
     @property
     def database_url(self) -> str:

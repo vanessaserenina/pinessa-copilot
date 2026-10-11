@@ -156,7 +156,9 @@ class ProductAlias(TimestampMixin, Base):
         String(20), nullable=False, default="suggested", server_default="suggested"
     )
     # Foreign key to users is added in Stage 2, when the users table exists.
-    approved_by_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    approved_by_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
     approved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

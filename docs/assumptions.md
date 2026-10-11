@@ -18,6 +18,6 @@
 - D4  "custom" markers set is_custom_allowed; custom orders always need human review.
 
 ## Open
-- "Stirrer logo / non logo" (MKN): meaning unclear, imported as written.
+- Stirrer line "Stirrer logo / non logo" = a plain stirrer offered with or without logo (family "Stirrer", 2 SKUs).
 - "Sandal closed towel" (SDL): possibly "closed toe", imported as written.
 - Which kit items really have BOMs (decide before Stage 3).

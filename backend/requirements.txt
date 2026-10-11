@@ -7,3 +7,7 @@ pydantic-settings
 python-dotenv
 alembic
 pytest
+argon2-cffi
+pyjwt
+python-multipart
+httpx
