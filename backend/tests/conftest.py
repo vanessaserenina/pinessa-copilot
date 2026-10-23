@@ -10,7 +10,7 @@ from app.core.database import engine, get_db
 from app.main import app
 from app.modules.auth.models import Role, User
 from app.modules.auth.security import hash_password
-
+from app.modules.products.models import Product, ProductCategory, ProductFamily
 DEFAULT_PASSWORD = "correct-horse-battery"
 
 
@@ -57,5 +57,34 @@ def make_user(db):
         db.add(user)
         db.flush()
         return user
+
+    return factory
+
+@pytest.fixture()
+def new_product(db):
+    """Factory for throw-away synthetic products (rolled back after each test)."""
+
+    def factory(product_type="FINISHED", unit="pcs"):
+        tag = uuid.uuid4().hex[:8]
+        category = ProductCategory(code=f"ZZB-CAT-{tag}", name="Test category")
+        db.add(category)
+        db.flush()
+        family = ProductFamily(
+            category_id=category.id, code=f"ZZB-FAM-{tag}", name="Test family", source="synthetic"
+        )
+        db.add(family)
+        db.flush()
+        product = Product(
+            family_id=family.id,
+            sku=f"ZZB-SKU-{tag}",
+            name=f"TEST product {tag}",
+            variant_key="default",
+            product_type=product_type,
+            unit_of_measure=unit,
+            source="synthetic",
+        )
+        db.add(product)
+        db.flush()
+        return product
 
     return factory

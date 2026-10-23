@@ -12,7 +12,7 @@ import csv
 import json
 import sys
 from pathlib import Path
-
+import app.models  # noqa: F401  (registers every table, including users)
 from app.modules.products.catalogue_parser import ParseResult, parse_catalogue, read_text
 
 ROOT_DIR = Path(__file__).resolve().parents[3]

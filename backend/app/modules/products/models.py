@@ -1,15 +1,18 @@
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Identity,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -162,3 +165,69 @@ class ProductAlias(TimestampMixin, Base):
     approved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+class Bom(TimestampMixin, Base):
+    """One version of a product's recipe: which components make 1 unit of it."""
+
+    __tablename__ = "boms"
+    __table_args__ = (
+        UniqueConstraint("product_id", "version_number", name="uq_boms_product_version"),
+        CheckConstraint("status IN ('draft', 'active', 'retired')", name="status_valid"),
+        CheckConstraint("version_number > 0", name="version_positive"),
+        # At most ONE active BOM per product, enforced by the database itself.
+        Index(
+            "uq_boms_one_active_per_product",
+            "product_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    product_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="draft", server_default="draft"
+    )
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    is_synthetic: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
+
+    product: Mapped[Product] = relationship()
+    items: Mapped[list["BomItem"]] = relationship(
+        back_populates="bom", cascade="all, delete-orphan", order_by="BomItem.id"
+    )
+
+
+class BomItem(TimestampMixin, Base):
+    """One component line of a BOM: how much of a component goes into 1 unit."""
+
+    __tablename__ = "bom_items"
+    __table_args__ = (
+        UniqueConstraint("bom_id", "component_product_id", name="uq_bom_items_bom_component"),
+        CheckConstraint("quantity_per_unit > 0", name="quantity_positive"),
+        CheckConstraint("scrap_percent >= 0 AND scrap_percent <= 100", name="scrap_range"),
+        Index("ix_bom_items_component_product_id", "component_product_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    bom_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("boms.id", ondelete="CASCADE"), nullable=False
+    )
+    component_product_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    quantity_per_unit: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
+    scrap_percent: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, default=Decimal("0"), server_default="0"
+    )
+
+    bom: Mapped[Bom] = relationship(back_populates="items")
+    component: Mapped[Product] = relationship()
