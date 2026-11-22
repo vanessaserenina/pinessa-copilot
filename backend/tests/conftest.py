@@ -1,8 +1,12 @@
 import uuid
 
+from pathlib import Path
+from alembic import command
+from alembic.config import Config
+from sqlalchemy.schema import CreateSchema, DropSchema
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401  (registers every table, including users)
@@ -125,3 +129,23 @@ def make_bom(db):
         return bom
 
     return factory
+
+@pytest.fixture()
+def migrated_db(monkeypatch):
+    """An isolated, migrated schema for tests that need committed transactions."""
+    schema = f"inventory_test_{uuid.uuid4().hex}"
+    with engine.begin() as conn:
+        conn.execute(CreateSchema(schema))
+    isolated = create_engine(engine.url)
+    try:
+        monkeypatch.setenv("PGOPTIONS", f"-c search_path={schema}")
+        backend = Path(__file__).resolve().parents[1]
+        config = Config(str(backend / "alembic.ini"))
+        config.set_main_option("script_location", str(backend / "migrations"))
+        command.upgrade(config, "head")
+        with Session(isolated) as session:
+            yield session
+    finally:
+        isolated.dispose()
+        with engine.begin() as conn:
+            conn.execute(DropSchema(schema, cascade=True))

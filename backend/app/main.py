@@ -7,6 +7,7 @@ from app.api.audit_events import router as audit_router
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
 from app.api.inventory import router as inventory_router
+from app.api.orders import router as orders_router
 from app.api.users import router as users_router
 from app.core.config import settings
 from app.api.boms import router as boms_router
@@ -31,3 +32,4 @@ app.include_router(audit_router, prefix="/api")
 app.include_router(products_router, prefix="/api")
 app.include_router(boms_router, prefix="/api")
 app.include_router(inventory_router, prefix="/api")
+app.include_router(orders_router, prefix="/api")

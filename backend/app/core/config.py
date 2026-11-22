@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
+    order_duplicate_days: int = 7
     dev_seed_password: str | None = None
 
     @field_validator("jwt_secret_key")
