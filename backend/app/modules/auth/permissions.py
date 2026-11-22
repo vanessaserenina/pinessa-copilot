@@ -1,10 +1,11 @@
 """Role -> permissions. Each later stage adds its own permissions here."""
 
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
-    "admin": frozenset({"users:manage", "audit:read", "products:read", "boms:manage"}),
-    "sales": frozenset({"products:read"}),
+    "admin": frozenset({"users:manage", "audit:read", "products:read", "boms:manage",
+                        "inventory:receive", "inventory:reserve"}),
+    "sales": frozenset({"products:read", "inventory:reserve"}),
     "purchasing": frozenset({"products:read"}),
-    "warehouse": frozenset({"products:read"}),
+    "warehouse": frozenset({"products:read", "inventory:receive", "inventory:reserve"}),
     "approver": frozenset({"audit:read", "products:read"}),
 }
 
