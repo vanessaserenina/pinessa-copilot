@@ -16,6 +16,9 @@
 - D2  SKU codes are system-generated, e.g. MND-SABUN-BATANG-BULAT-PKG-LOGO.
 - D3  Repeated names stay separate families under their own category.
 - D4  "custom" markers set is_custom_allowed; custom orders always need human review.
+- Q1-Q7 (Stage 3): BOMs only for 6 kit families, one BOM per SKU, scrap 0/2/5% with round-up on the
+  total, catalogue components counted per packed unit (confirm per item), BOM management admin-only,
+  sessionStorage for the login token, ILIKE search until Stage 8.
 
 ## Open
 - Stirrer line "Stirrer logo / non logo" = a plain stirrer offered with or without logo (family "Stirrer", 2 SKUs).

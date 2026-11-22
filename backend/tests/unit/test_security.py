@@ -61,3 +61,10 @@ def test_only_admin_manages_users():
 
 def test_audit_read_is_admin_and_approver_only():
     assert {r for r, p in ROLE_PERMISSIONS.items() if "audit:read" in p} == {"admin", "approver"}
+
+def test_every_role_can_read_products():
+    assert all("products:read" in permissions for permissions in ROLE_PERMISSIONS.values())
+
+
+def test_only_admin_manages_boms():
+    assert {r for r, p in ROLE_PERMISSIONS.items() if "boms:manage" in p} == {"admin"}

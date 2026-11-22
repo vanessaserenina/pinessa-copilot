@@ -38,9 +38,10 @@ def bom_lines(bom: Bom) -> list[BomLine]:
     ]
 
 
-def calculate_product_requirements(
+def calculate_with_bom(
     db: Session, product_id: int, quantity: int | str | Decimal
-) -> list[RequirementLine]:
+) -> tuple[Bom, list[RequirementLine]]:
+    """Return the active BOM that was used, together with the calculated requirements."""
     product = db.get(Product, product_id)
     if product is None:
         raise ProductNotFoundError(f"Product {product_id} does not exist.")
@@ -50,4 +51,10 @@ def calculate_product_requirements(
             f"Product '{product.sku}' has no active BOM. "
             "Either it is bought finished (check finished-goods stock only), or its BOM is missing."
         )
-    return calculate_requirements(quantity, bom_lines(bom))
+    return bom, calculate_requirements(quantity, bom_lines(bom))
+
+
+def calculate_product_requirements(
+    db: Session, product_id: int, quantity: int | str | Decimal
+) -> list[RequirementLine]:
+    return calculate_with_bom(db, product_id, quantity)[1]
