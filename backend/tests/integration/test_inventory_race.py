@@ -1,41 +1,21 @@
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
-from pathlib import Path
 from threading import Barrier
 from uuid import uuid4
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import event, select
 from sqlalchemy.orm import Session
-from sqlalchemy.schema import CreateSchema, DropSchema
 
-from app.core.database import engine, get_db
+from app.core.database import get_db
 from app.main import app
 from app.modules.inventory.models import Reservation
 
 
 @pytest.fixture()
-def db(monkeypatch):
-    # The competitors need separate committed transactions and disposable data.
-    schema = f"inventory_test_{uuid4().hex}"
-    with engine.begin() as conn:
-        conn.execute(CreateSchema(schema))
-    isolated = create_engine(engine.url)
-    try:
-        monkeypatch.setenv("PGOPTIONS", f"-c search_path={schema}")
-        backend = Path(__file__).resolve().parents[2]
-        config = Config(str(backend / "alembic.ini"))
-        config.set_main_option("script_location", str(backend / "migrations"))
-        command.upgrade(config, "head")
-        with Session(isolated) as session:
-            yield session
-    finally:
-        isolated.dispose()
-        with engine.begin() as conn:
-            conn.execute(DropSchema(schema, cascade=True))
+def db(migrated_db):
+    return migrated_db
 
 
 @pytest.mark.parametrize(("quantity", "unit"), [(3, "pcs"), ("0.3334", "g")])

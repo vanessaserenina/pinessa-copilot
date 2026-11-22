@@ -24,5 +24,6 @@ class Reservation(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("inventory.product_id"))
-    quantity: Mapped[Decimal] = mapped_column(Numeric(QUANTITY_PRECISION, QUANTITY_SCALE))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(23, QUANTITY_SCALE))
+    order_id: Mapped[int | None] = mapped_column(ForeignKey("orders.id"), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))

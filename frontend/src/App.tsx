@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { ApiError, errorMessage, request } from "./api";
 import type { Api, User } from "./api";
 import { Catalogue } from "./Catalogue";
+import { ManualOrders } from "./ManualOrders";
 import { ProductDetailScreen } from "./ProductDetailScreen";
 import "./App.css";
 
@@ -59,11 +60,15 @@ function productFromHash() {
 
 function Workspace({ user, api, onSignOut }: { user: User; api: Api; onSignOut: () => void }) {
   const [productId, setProductId] = useState(productFromHash);
+  const [ordersRoute, setOrdersRoute] = useState(window.location.hash === "#/orders");
+  const canManageOrders = ["sales", "admin"].includes(user.role);
+  const showOrders = ordersRoute && canManageOrders;
   const [catalogueRevision, setCatalogueRevision] = useState(0);
 
   useEffect(() => {
     function navigate() {
       setProductId(productFromHash());
+      setOrdersRoute(window.location.hash === "#/orders");
       window.scrollTo(0, 0);
     }
     window.addEventListener("hashchange", navigate);
@@ -75,21 +80,23 @@ function Workspace({ user, api, onSignOut }: { user: User; api: Api; onSignOut: 
       <aside className="sidebar">
         <Brand />
         <nav aria-label="Main navigation">
-          <a href="#/products" aria-current={productId ? undefined : "page"}>
+          <a href="#/products" aria-current={productId || showOrders ? undefined : "page"}>
             <span className="catalogue-icon" aria-hidden="true" /> Catalogue
           </a>
+          {canManageOrders && <a href="#/orders" aria-current={showOrders ? "page" : undefined}>Orders</a>}
         </nav>
       </aside>
       <div className="workspace-body">
         <header className="topbar">
-          <span className="topbar-title">Product workspace</span>
+          <span className="topbar-title">{showOrders ? "Order workspace" : "Product workspace"}</span>
           <div className="account">
             <div className="account-name"><strong>{user.full_name}</strong><small>{user.role}</small></div>
             <button className="secondary" onClick={onSignOut}>Sign out</button>
           </div>
         </header>
         <main className="content">
-          <div hidden={productId !== null}><Catalogue api={api} revision={catalogueRevision} /></div>
+          <div hidden={productId !== null || showOrders}><Catalogue api={api} revision={catalogueRevision} /></div>
+          {showOrders && <ManualOrders api={api} />}
           {productId && <ProductDetailScreen key={productId} id={productId} api={api} isAdmin={user.role === "admin"}
             onBomChange={() => setCatalogueRevision((revision) => revision + 1)} />}
         </main>
