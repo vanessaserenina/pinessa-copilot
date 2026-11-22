@@ -37,3 +37,5 @@ __pycache__/
 node_modules/
 dist/
 .DS_Store
+
+development-plan.md
