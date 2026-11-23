@@ -2,23 +2,25 @@ from datetime import datetime
 from pathlib import PureWindowsPath
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.models import User
+from app.modules.orders.extraction import extract_source_text
 from app.modules.orders.intake import receive_source
 from app.modules.orders.models import OrderSource
 
 class OrderSourceRoute(APIRoute):
     def get_route_handler(self):
         handler = super().get_route_handler()
-        if "POST" not in self.methods:
+        if self.body_field is None:
             return handler
 
         async def limited_upload(request: Request):
@@ -89,6 +91,19 @@ def upload_source(actor: Manager, db: Database, text: Annotated[str | None, Form
         raise HTTPException(422, "Invalid filename.")
     return receive_source(db, actor.id, file.file.read(settings.order_source_upload_limit + 1),
                           filename=filename)
+
+
+@router.get("/failed-extractions")
+def failed_extractions(actor: Manager, db: Database, after_id: Annotated[int, Query(ge=0)] = 0) -> list[int]:
+    """Return the next 100 source IDs requiring manual handling."""
+    return list(db.scalars(select(OrderSource.id).where(
+        OrderSource.status == "failed_extraction", OrderSource.id > after_id,
+    ).order_by(OrderSource.id).limit(100)))
+
+
+@router.post("/{source_id}/extract-text")
+def convert_source(source_id: int, actor: Manager, db: Database) -> SourceOut:
+    return extract_source_text(db, source_id, actor.id)
 
 
 @router.get("/{source_id}")
