@@ -27,7 +27,10 @@ const { chromium } = require(process.env.PINESSA_PLAYWRIGHT);
     await page.getByRole("button", { name: "Previous page" }).click();
     await page.getByLabel("Awaiting review").selectOption("1");
     await page.unroute(queuePath);
-    await page.getByLabel("Order file").setInputFiles({
+    const missing = process.env.PINESSA_QUANTITY_SCENARIO === "missing";
+    if (missing) {
+      await page.getByLabel("Order message").fill("Customer: TEST Acorn Hotel. PO TEST-PILOT-7. Delivery date 2027-08-18. Blue clips, SKU CLIP-B.");
+    } else await page.getByLabel("Order file").setInputFiles({
       name: "TEST-clips.csv", mimeType: "text/csv",
       buffer: Buffer.from('"Synthetic customer Acorn, PO TEST-42: 2.50 cases of blue clips, SKU CLIP-B. Deliver on 2027-03-12."\n'),
     });
@@ -40,12 +43,20 @@ const { chromium } = require(process.env.PINESSA_PLAYWRIGHT);
     if (!await product.inputValue()) throw new Error("Expected automatic blue clip selection");
     await page.getByLabel("Customer code").fill("TEST-ACORN");
     await page.getByLabel("PO number", { exact: true }).fill("TEST-BROWSER-CORRECTED");
-    await page.getByLabel("Confirmed quantity").fill("3");
+    const quantity = page.getByLabel("Confirmed quantity");
+    if (await quantity.inputValue() !== "") throw new Error("Quantity must start blank");
+    if (!missing) await page.getByText("Requested quantity: 2.50 cases", { exact: true }).waitFor();
     await page.getByLabel("Unit price").fill("1.20");
     const delivery = new Date();
     delivery.setDate(delivery.getDate() + 30);
     await page.getByLabel("Delivery date").fill(delivery.toISOString().slice(0, 10));
     await page.getByLabel("Currency").fill("SGD");
+    const submit = page.getByRole("button", { name: "Confirm order and reserve stock" });
+    await submit.click();
+    if (!await quantity.evaluate(input => input.validity.valueMissing && input === document.activeElement)) {
+      throw new Error("Sales must enter the whole-unit quantity");
+    }
+    await quantity.fill("3");
     await page.getByRole("button", { name: "Confirm order and reserve stock" }).click();
     await page.getByText(/Confirmed order #\d+/).waitFor();
     await page.getByRole("link", { name: "Dashboard", exact: true }).click();

@@ -44,7 +44,14 @@ class MatchCandidate(BaseModel):
     score: float
 
 
+class SourceQuantity(BaseModel):
+    quantity: str
+    unit: str
+    normalized_unit: str
+
+
 class LineMatch(BaseModel):
+    source_quantity: SourceQuantity | None = None
     line_index: int
     requested_text: str
     normalized_text: str

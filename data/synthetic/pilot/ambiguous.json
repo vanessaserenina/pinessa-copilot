@@ -1,0 +1,15 @@
+{
+  "format": "text",
+  "source": "Customer: TEST Acorn Hotel. PO TEST-PILOT-8. 8 cases of clips. Colour to follow.",
+  "expected": {
+    "customer": "TEST Acorn Hotel",
+    "po": "TEST-PILOT-8",
+    "delivery_date": null,
+    "quantity": "8",
+    "stated_sku": null,
+    "auto_sku": null,
+    "confirmed_sku": null,
+    "order_status": null,
+    "shortfall": null
+  }
+}

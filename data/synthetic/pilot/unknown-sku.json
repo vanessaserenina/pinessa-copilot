@@ -1,0 +1,15 @@
+{
+  "format": "csv",
+  "source": "customer,po,delivery_date,order_line\nTEST Acorn Hotel,TEST-PILOT-4,2027-08-18,\"5 cases of blue clips, SKU CLIP-X.\"\n",
+  "expected": {
+    "customer": "TEST Acorn Hotel",
+    "po": "TEST-PILOT-4",
+    "delivery_date": "2027-08-18",
+    "quantity": "5",
+    "stated_sku": "CLIP-X",
+    "auto_sku": null,
+    "confirmed_sku": null,
+    "order_status": null,
+    "shortfall": null
+  }
+}

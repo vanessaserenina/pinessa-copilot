@@ -1,0 +1,7 @@
+[
+  {"case":"multi-line","format":"text","source":"Customer: TEST Larch Hotel. PO TEST-NEW-1.\n4 cases of red clips, SKU CLIP-R.\nBlue clips, SKU CLIP-B.","expected_skus":["CLIP-R","CLIP-B"],"expected_quantities":["4",null],"sales_quantities":[4,3],"confirmation":200,"available":[16,17]},
+  {"case":"xlsx","format":"xlsx","source":"Customer: TEST Larch Hotel. PO TEST-NEW-2. 5 cases of blue clips, SKU CLIP-B.","expected_skus":["CLIP-B"],"expected_quantities":["5"],"sales_quantities":[5],"confirmation":200,"available":[15]},
+  {"case":"scanned-pdf","format":"pdf","source":"Customer: TEST Larch Hotel. PO TEST-NEW-3.\n6 cases of blue clips, SKU CLIP-B.","expected_skus":["CLIP-B"],"expected_quantities":["6"],"sales_quantities":[6],"confirmation":200,"available":[14]},
+  {"case":"duplicate","format":"text","source":"Customer: TEST Larch Hotel. PO TEST-NEW-4. 2 cases of blue clips, SKU CLIP-B.","expected_skus":["CLIP-B"],"expected_quantities":["2"],"sales_quantities":[2],"confirmation":200,"available":[18],"repeat_upload":409},
+  {"case":"stock-shortage","format":"text","source":"Customer: TEST Larch Hotel. PO TEST-NEW-5. 24 cases of blue clips, SKU CLIP-B.","expected_skus":["CLIP-B"],"expected_quantities":["24"],"sales_quantities":[24],"confirmation":422,"available":[20]}
+]

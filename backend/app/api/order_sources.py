@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
 from app.modules.ai.models import AIExtraction
-from app.modules.ai.schemas import Customer, ExtractionOut
+from app.modules.ai.quantity import source_quantities
+from app.modules.ai.schemas import Customer, ExtractionOut, SourceQuantity
 from app.modules.audit.models import AuditEvent
 from app.modules.audit.service import record_audit_event
 from app.modules.orders.schemas import OrderInput, OrderOut, PricedLine
@@ -122,9 +123,19 @@ def convert_source(source_id: int, actor: Manager, db: Database) -> SourceOut:
     return extract_source_text(db, source_id, actor.id)
 
 
+def review_output(db: Session, extraction: AIExtraction) -> ExtractionOut:
+    output = ExtractionOut.model_validate(extraction, from_attributes=True)
+    if output.validated_output and output.line_matches:
+        source = db.get(OrderSource, extraction.order_source_id)
+        evidence = source_quantities(source.raw_text or "", output.validated_output.lines, source.source_type)
+        for match, quantity in zip(output.line_matches, evidence, strict=True):
+            match.source_quantity = SourceQuantity(**quantity) if quantity else None
+    return output
+
+
 @router.post("/{source_id}/extract-order")
 def propose_order(source_id: int, actor: Manager, db: Database) -> ExtractionOut:
-    return extract_order(db, source_id, actor.id)
+    return review_output(db, extract_order(db, source_id, actor.id))
 
 
 @router.get("/{source_id}/extraction")
@@ -132,7 +143,7 @@ def read_extraction(source_id: int, actor: Manager, db: Database) -> ExtractionO
     extraction = db.scalar(select(AIExtraction).where(AIExtraction.order_source_id == source_id))
     if extraction is None:
         raise HTTPException(404, "Order extraction not found.")
-    return extraction
+    return review_output(db, extraction)
 
 
 @router.get("/{source_id}")

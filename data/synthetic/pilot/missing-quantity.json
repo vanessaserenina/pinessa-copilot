@@ -1,0 +1,15 @@
+{
+  "format": "text",
+  "source": "Customer: TEST Acorn Hotel. PO TEST-PILOT-7. Delivery date 2027-08-18. Blue clips, SKU CLIP-B.",
+  "expected": {
+    "customer": "TEST Acorn Hotel",
+    "po": "TEST-PILOT-7",
+    "delivery_date": "2027-08-18",
+    "quantity": null,
+    "stated_sku": "CLIP-B",
+    "auto_sku": "CLIP-B",
+    "confirmed_sku": null,
+    "order_status": null,
+    "shortfall": null
+  }
+}
