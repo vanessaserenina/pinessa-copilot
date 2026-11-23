@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.modules.audit.service import record_audit_event
+from app.modules.deliveries.models import Delivery
 from app.modules.inventory.models import Inventory, Reservation
 from app.modules.orders.models import Order, OrderItem, OrderRevision
 from app.modules.orders.preview import ManualOrderPreview, preview_stock
@@ -116,6 +117,8 @@ def save_order(db: Session, data: OrderInput, actor_id: int, order: Order | None
     reason = "Manual order created"
     if isinstance(data, EditInput) and order is not None:
         check_revision(order, data.revision)
+        if order.status in {"partially_dispatched", "dispatched", "delivered"}:
+            raise HTTPException(409, "This order has shipped quantities and cannot be revised.")
         reason = data.reason
     ids = {line.product_id for line in data.lines}
     valid = set(db.scalars(select(Product.id).where(Product.id.in_(ids), Product.is_active,
@@ -127,6 +130,8 @@ def save_order(db: Session, data: OrderInput, actor_id: int, order: Order | None
         order = Order()
         db.add(order)
     else:
+        db.execute(update(Delivery).where(Delivery.order_id == order.id, Delivery.revision == order.revision,
+                                          Delivery.status.in_(["pending", "ready"])).values(status="superseded"))
         order.revision += 1
     order.customer_code = data.customer_code
     order.customer_po_number = data.customer_po_number

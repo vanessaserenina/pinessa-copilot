@@ -12,7 +12,8 @@ class Order(TimestampMixin, Base):
     __tablename__ = "orders"
     __table_args__ = (
         UniqueConstraint("customer_code", "customer_po_number", name="uq_orders_customer_po"),
-        CheckConstraint("status in ('draft','awaiting_materials','ready_for_production','ready_for_delivery')",
+        CheckConstraint("status in ('draft','awaiting_materials','ready_for_production','ready_for_delivery',"
+                        "'in_production','partially_dispatched','dispatched','delivered')",
                         name="status_valid"),
     )
 
