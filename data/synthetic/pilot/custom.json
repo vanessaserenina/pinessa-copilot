@@ -1,0 +1,15 @@
+{
+  "format": "text",
+  "source": "Customer: TEST Acorn Hotel. PO TEST-PILOT-6. Delivery date 2027-08-18. 7 cases of blue clips, SKU CLIP-B. Print our hotel logo on every clip.",
+  "expected": {
+    "customer": "TEST Acorn Hotel",
+    "po": "TEST-PILOT-6",
+    "delivery_date": "2027-08-18",
+    "quantity": "7",
+    "stated_sku": "CLIP-B",
+    "auto_sku": null,
+    "confirmed_sku": null,
+    "order_status": null,
+    "shortfall": null
+  }
+}

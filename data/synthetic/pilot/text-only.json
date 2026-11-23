@@ -1,0 +1,15 @@
+{
+  "format": "csv",
+  "source": "customer,po,delivery_date,order_line\nTEST Acorn Hotel,TEST-PILOT-5,2027-08-18,\"6 cases of red clips.\"\n",
+  "expected": {
+    "customer": "TEST Acorn Hotel",
+    "po": "TEST-PILOT-5",
+    "delivery_date": "2027-08-18",
+    "quantity": "6",
+    "stated_sku": null,
+    "auto_sku": null,
+    "confirmed_sku": "CLIP-R",
+    "order_status": "ready_for_delivery",
+    "shortfall": 0
+  }
+}

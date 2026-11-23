@@ -1,0 +1,15 @@
+{
+  "format": "text",
+  "source": "Customer: TEST Acorn Hotel. PO TEST-PILOT-2. Delivery date 2027-08-18. 3 cases of desk fasteners.",
+  "expected": {
+    "customer": "TEST Acorn Hotel",
+    "po": "TEST-PILOT-2",
+    "delivery_date": "2027-08-18",
+    "quantity": "3",
+    "stated_sku": null,
+    "auto_sku": "CLIP-B",
+    "confirmed_sku": "CLIP-B",
+    "order_status": "ready_for_delivery",
+    "shortfall": 0
+  }
+}

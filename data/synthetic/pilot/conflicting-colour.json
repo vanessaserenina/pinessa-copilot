@@ -1,0 +1,15 @@
+{
+  "format": "text",
+  "source": "Customer: TEST Acorn Hotel. PO TEST-PILOT-3. Delivery date 2027-08-18. 4 cases of red clips, SKU CLIP-B.",
+  "expected": {
+    "customer": "TEST Acorn Hotel",
+    "po": "TEST-PILOT-3",
+    "delivery_date": "2027-08-18",
+    "quantity": "4",
+    "stated_sku": "CLIP-B",
+    "auto_sku": null,
+    "confirmed_sku": null,
+    "order_status": null,
+    "shortfall": null
+  }
+}
