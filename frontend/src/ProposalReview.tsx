@@ -55,7 +55,9 @@ export function ProposalReview({ api }: { api: Api }) {
   const [sourceId, setSourceId] = useState("");
   const [duplicate, setDuplicate] = useState(false);
   const [queueRevision, setQueueRevision] = useState(0);
-  const pending = useQuery<number[]>(api, "/order-sources/pending-review", queueRevision);
+  const [queuePages, setQueuePages] = useState([0]);
+  const pending = useQuery<number[]>(api, `/order-sources/pending-review?after_id=${queuePages[queuePages.length - 1]}`, queueRevision);
+  const nextCursor = pending.data?.length === 100 ? pending.data[99] : null;
   const output = proposal?.validated_output;
 
   async function load(event: FormEvent<HTMLFormElement>, existing: boolean) {
@@ -118,8 +120,16 @@ export function ProposalReview({ api }: { api: Api }) {
       <label>Order file<input type="file" name="file" accept=".pdf,.xlsx,.csv,.png,.jpg,.jpeg" /></label>
       <button>Extract proposal</button></fieldset></form>
     <form className="actions" onSubmit={e => load(e, true)}>
-      <datalist id="pending-sources">{pending.data?.map(id => <option key={id} value={id}>Awaiting review</option>)}</datalist>
-      <label>Existing source number<input list="pending-sources" type="number" min="1" required value={sourceId} onChange={e => setSourceId(e.target.value)} /></label>
+      <label>Awaiting review<select value={pending.data?.includes(Number(sourceId)) ? sourceId : ""}
+        onChange={e => setSourceId(e.target.value)}>
+        <option value="">Select a source</option>
+        {pending.data?.map(id => <option key={id} value={id}>Source #{id}</option>)}
+      </select></label>
+      {queuePages.length > 1 && <button type="button" onClick={() => setQueuePages(p => p.slice(0, -1))}>Previous page</button>}
+      {nextCursor !== null && <button type="button"
+        onClick={() => setQueuePages([...queuePages, nextCursor])}>Next page</button>}
+      {pending.error && <span role="alert">{pending.error} <button type="button" onClick={pending.retry}>Retry queue</button></span>}
+      <label>Existing source number<input type="number" min="1" required value={sourceId} onChange={e => setSourceId(e.target.value)} /></label>
       <button disabled={busy}>Open source</button></form>
     {busy && <p role="status">Processing…</p>}
     {error && <p className="error" role="alert">{error}</p>}

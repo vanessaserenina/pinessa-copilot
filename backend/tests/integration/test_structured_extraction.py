@@ -305,3 +305,17 @@ def test_only_approved_alias_can_select(client, db, source, mock_llm, new_produc
     assert match["selected_product_id"] == (product.id if accepted else None)
     if accepted:
         assert match["method"] == "alias"
+
+
+@pytest.mark.parametrize("count", [0, 101])
+def test_unconfirmable_proposal_routes_to_manual_handling(client, source, mock_llm, count):
+    url, headers = source
+    output = {**EXPECTED, "lines": EXPECTED["lines"] * count}
+    calls = mock_llm(("stop", json.dumps(output)))
+    reply = client.post(url + "/extract-order", headers=headers).json()
+    assert reply["validated_output"] == output
+    assert reply["status"] == "needs_manual_handling" and reply["line_matches"] is None
+    assert "1 to 100" in reply["error_message"]
+    assert client.get("/api/order-sources/pending-review", headers=headers).json() == []
+    assert client.get("/api/order-sources/failed-extractions", headers=headers).json() == [reply["order_source_id"]]
+    assert client.post(url + "/extract-order", headers=headers).json() == reply and len(calls) == 1

@@ -14,7 +14,19 @@ const { chromium } = require(process.env.PINESSA_PLAYWRIGHT);
     await page.getByLabel("Email", { exact: true }).fill(process.env.PINESSA_TEST_EMAIL);
     await page.getByLabel("Password").fill(process.env.PINESSA_TEST_PASSWORD);
     await page.getByRole("button", { name: "Sign in" }).click();
+    const queuePath = "**/api/order-sources/pending-review?*";
+    await page.route(queuePath, route => {
+      const after = new URL(route.request().url()).searchParams.get("after_id");
+      const ids = after === "100" ? [101] : Array.from({ length: 100 }, (_, index) => index + 1);
+      return route.fulfill({ json: ids });
+    });
     await page.getByRole("link", { name: "Order intake" }).click();
+    await page.getByRole("button", { name: "Next page" }).click();
+    await page.getByLabel("Awaiting review").selectOption("101");
+    if (await page.getByLabel("Existing source number").inputValue() !== "101") throw new Error("Missing second-page source");
+    await page.getByRole("button", { name: "Previous page" }).click();
+    await page.getByLabel("Awaiting review").selectOption("1");
+    await page.unroute(queuePath);
     await page.getByLabel("Order file").setInputFiles({
       name: "TEST-clips.csv", mimeType: "text/csv",
       buffer: Buffer.from('"Synthetic customer Acorn, PO TEST-42: 2.50 cases of blue clips, SKU CLIP-B. Deliver on 2027-03-12."\n'),
