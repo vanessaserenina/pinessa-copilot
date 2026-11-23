@@ -8,6 +8,7 @@ from app.modules.ai import provider
 from app.modules.ai.matching import match_lines
 from app.modules.ai.models import AIExtraction
 from app.modules.ai.schemas import StructuredOrder
+from app.modules.ai.source_checks import correction
 from app.modules.audit.service import record_audit_event
 from app.modules.orders.models import OrderSource
 
@@ -31,14 +32,19 @@ def extract_order(db: Session, source_id: int, actor_id: int) -> AIExtraction:
 
     outputs = []
     error = None
+    review_reason = None
+    reviewable_order = None
+    repair_schema = None
     validated = None
     for attempt in (1, 2):
         try:
-            choice = provider.request_order(source.raw_text, model, error)
+            choice = provider.request_order(source.raw_text, model, error, repair_schema)
         except provider.ContextWindowExceeded:
             error = "The source exceeds the model's context window and requires manual handling."
             break
         except provider.ProviderUnavailable as exc:
+            if reviewable_order is not None:
+                break
             raise HTTPException(503, "The local extraction provider is unavailable.") from exc
         outputs.append(choice.message.content)
         if choice.finish_reason != "stop":
@@ -52,12 +58,37 @@ def extract_order(db: Session, source_id: int, actor_id: int) -> AIExtraction:
             error = f"Output failed schema validation ({issue['type']}). Return all required fields with the specified types."
             continue
         validated = order.model_dump(mode="json")
-        error = None if 1 <= len(order.lines) <= 100 else "Confirmation requires 1 to 100 order lines."
+        if not 1 <= len(order.lines) <= 100:
+            error = "Confirmation requires 1 to 100 order lines."
+            break
+        if reviewable_order is not None and source.source_type == "text" and (
+                len(order.lines) != 1 or order.lines[0].stated_sku is not None):
+            error = "The product description still has an unverified stated SKU."
+            break
+        repair = correction(db, source, order)
+        if repair:
+            review_reason, repair_schema = repair
+            if attempt == 1:
+                reviewable_order = order
+                error = review_reason
+                continue
+        else:
+            review_reason = None
+        error = None
         break
 
+    # A failed correction must not discard the original reviewable proposal.
+    if error and reviewable_order is not None:
+        order = reviewable_order
+        validated = order.model_dump(mode="json")
+        error = None
+    matches = match_lines(db, order.lines) if error is None else None
+    if review_reason and matches:
+        for match in matches:
+            match.update(selected_product_id=None, status="needs_review", reason=review_reason)
     extraction = AIExtraction(
         order_source_id=source_id, model_name=model, prompt_version=provider.PROMPT_VERSION,
-        line_matches=match_lines(db, order.lines) if error is None else None,
+        line_matches=matches,
         raw_output=outputs, validated_output=validated, schema_valid=validated is not None,
         status="needs_review" if error is None else "needs_manual_handling", error_message=error,
     )

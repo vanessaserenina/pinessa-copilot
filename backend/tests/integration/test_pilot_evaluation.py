@@ -6,9 +6,12 @@ from io import BytesIO
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from app.core.config import settings
+from app.modules.ai.models import AIExtraction
+from app.modules.ai.schemas import StructuredOrder
 from app.modules.audit.models import AuditEvent
 from app.modules.inventory.models import Inventory
 from app.modules.orders.models import Order
@@ -63,7 +66,11 @@ def test_pilot_order(case_file, db, client, make_user, headers_for, products):
     response = client.post(path + "/extract-order", headers=headers)
     assert response.status_code == 200, response.text
     proposal = response.json()
-    output = proposal["validated_output"] or {}
+    replies = db.get(AIExtraction, proposal["id"]).raw_output
+    try:
+        output = StructuredOrder.model_validate_json(replies[-1], strict=True).model_dump(mode="json") if replies else {}
+    except ValidationError:
+        output = {}
     lines = output.get("lines", [])
     line = lines[0] if len(lines) == 1 else {}
     matches = proposal["line_matches"] or []
@@ -84,7 +91,7 @@ def test_pilot_order(case_file, db, client, make_user, headers_for, products):
     right_route = (len(matches) == 1 and
                    auto_skus == ([expected["auto_sku"]] if expected["auto_sku"] else []))
     assert db.scalar(select(func.count()).select_from(Order)) == 0
-    result = {"case": case_file.stem, "fields": fields, "lines": len(lines),
+    result = {"case": case_file.stem, "attempts": len(replies), "fields": fields, "lines": len(lines),
               "observed": {"customer": (output.get("customer") or {}).get("name"),
                            "quantity": line.get("quantity"), "stated_sku": line.get("stated_sku"),
                            "requested_text": line.get("requested_text")},
