@@ -343,3 +343,41 @@ def test_competing_full_deliveries(db, sent_po, approval_draft, scenario):
     with ThreadPoolExecutor(max_workers=2) as workers:
         assert sorted(workers.map(receive, [uuid4(), uuid4()])) == ["409", "received"]
     assert {row.product_id: row.available for row in db.scalars(select(Inventory))} == quantities
+
+
+def test_role_dashboard_counts_and_personal_notifications(client, db, approval_draft, scenario,
+                                                          make_user, headers_for):
+    from sqlalchemy import func
+    from app.modules.orders.models import Order
+
+    draft, creator = approval_draft
+    buyer, sales = scenario[:2]
+    approver = headers_for(make_user("approver"))
+    admin = headers_for(make_user("admin"))
+    db.commit()
+    path = f"/api/purchasing/purchase-orders/{draft['id']}"
+    assert client.post(path + "/submit", headers=creator).status_code == 200
+    assert client.get("/api/dashboard").status_code == 401
+    overview = client.get("/api/dashboard", headers=admin)
+    assert overview.status_code == 200, overview.text
+    groups = overview.json()["groups"]
+    assert groups["Orders"] == dict(db.execute(select(Order.status, func.count()).group_by(Order.status)).all())
+    assert groups["Material shortages"]["orders awaiting materials"] == groups["Orders"]["awaiting_materials"] == 1
+    assert groups["Purchasing"]["pending approval"] == db.scalar(select(func.count()).select_from(PurchaseOrder)
+                                                                 .where(PurchaseOrder.status == "pending_approval")) == 1
+    assert groups["Deliveries"] == {} and groups["Production jobs"] == {}
+    sales_dashboard = client.get("/api/dashboard", headers=sales).json()
+    assert "Purchasing" not in sales_dashboard["groups"]
+    assert [n["entity"] for n in sales_dashboard["notifications"]] == ["order"]
+    alert, = client.get("/api/dashboard", headers=approver).json()["notifications"]
+    assert alert["entity"] == "purchase_order" and alert["entity_id"] == draft["id"]
+    read = f"/api/dashboard/notifications/{alert['id']}/read"
+    assert client.post(read, headers=buyer).status_code == 404
+    assert client.post(read, headers=approver).status_code == 204
+    assert client.post(read, headers=approver).status_code == 204
+    assert client.get("/api/dashboard", headers=approver).json()["notifications"] == []
+    assert alert in client.get("/api/dashboard", headers=admin).json()["notifications"]
+    assert client.post(path + "/approve", headers=approver).status_code == 200
+    final = client.get("/api/dashboard", headers=admin).json()
+    assert final["groups"]["Purchasing"]["pending approval"] == 0
+    assert alert not in final["notifications"]

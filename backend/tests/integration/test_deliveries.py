@@ -112,3 +112,16 @@ def test_revision_supersedes_unshipped_delivery(client, shipment):
     snapshot = client.get(delivery, headers=warehouse).json()
     assert snapshot["status"] == "superseded" and snapshot["items"][0]["quantity"] == 2
     assert client.put(delivery + "/status/ready", headers=warehouse).status_code == 409
+
+
+def test_warehouse_dashboard_totals(client, db, shipment):
+    from app.modules.deliveries.models import Delivery
+    from app.modules.production.models import ProductionJob
+
+    warehouse = shipment[2]
+    groups = client.get("/api/dashboard", headers=warehouse).json()["groups"]
+    completed = db.scalar(select(func.count()).select_from(ProductionJob)
+                          .where(ProductionJob.completed_at.is_not(None)))
+    pending = db.scalar(select(func.count()).select_from(Delivery).where(Delivery.status == "pending"))
+    assert groups["Production jobs"] == {"completed": completed} and completed == 1
+    assert groups["Deliveries"] == {"pending": pending} and pending == 1

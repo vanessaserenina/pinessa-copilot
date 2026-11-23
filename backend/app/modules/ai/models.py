@@ -16,3 +16,5 @@ class AIExtraction(TimestampMixin, Base):
     schema_valid: Mapped[bool]
     status: Mapped[str] = mapped_column(String(32))
     error_message: Mapped[str | None] = mapped_column(String(300))
+    line_matches: Mapped[list[dict] | None] = mapped_column(JSON(none_as_null=True))
+    confirmed_order_id: Mapped[int | None] = mapped_column(ForeignKey("orders.id"), unique=True)

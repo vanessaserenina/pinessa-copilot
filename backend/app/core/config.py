@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     order_source_storage: Path = ROOT_DIR / "storage" / "order-sources"
     order_source_upload_limit: int = 10 * 1024 * 1024
     llm_model: str | None = Field(default=None, min_length=1, max_length=200)
+    llm_read_timeout_seconds: int = Field(default=240, ge=1, le=900)
     llm_port: int = Field(default=8080, ge=1, le=65535)
     delivery_storage: Path = ROOT_DIR / "storage" / "deliveries"
     delivery_upload_limit: int = 10 * 1024 * 1024

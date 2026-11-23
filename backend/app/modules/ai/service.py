@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.modules.ai import provider
+from app.modules.ai.matching import match_lines
 from app.modules.ai.models import AIExtraction
 from app.modules.ai.schemas import StructuredOrder
 from app.modules.audit.service import record_audit_event
@@ -18,6 +19,9 @@ def extract_order(db: Session, source_id: int, actor_id: int) -> AIExtraction:
         raise HTTPException(404, "Order source not found.")
     previous = db.scalar(select(AIExtraction).where(AIExtraction.order_source_id == source_id))
     if previous is not None:
+        if previous.validated_output is not None and previous.line_matches is None:
+            previous.line_matches = match_lines(db, StructuredOrder.model_validate(previous.validated_output).lines)
+            db.commit()
         return previous
     if source.status != "text_extracted" or not source.raw_text:
         raise HTTPException(409, "Extract source text before requesting an order proposal.")
@@ -53,6 +57,7 @@ def extract_order(db: Session, source_id: int, actor_id: int) -> AIExtraction:
 
     extraction = AIExtraction(
         order_source_id=source_id, model_name=model, prompt_version=provider.PROMPT_VERSION,
+        line_matches=match_lines(db, order.lines) if validated is not None else None,
         raw_output=outputs, validated_output=validated, schema_valid=validated is not None,
         status="needs_review" if validated is not None else "needs_manual_handling", error_message=error,
     )

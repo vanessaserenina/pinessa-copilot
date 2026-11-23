@@ -59,7 +59,7 @@ def request_order(text: str, model: str, retry_hint: str | None) -> Choice:
     try:
         response = httpx.post(
             f"http://127.0.0.1:{settings.llm_port}/v1/chat/completions", json=payload,
-            timeout=90, trust_env=False,
+            timeout=httpx.Timeout(settings.llm_read_timeout_seconds, connect=5), trust_env=False,
         )
         if response.status_code == 400:
             match response.json():

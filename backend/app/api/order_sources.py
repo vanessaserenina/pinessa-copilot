@@ -12,7 +12,11 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
 from app.modules.ai.models import AIExtraction
-from app.modules.ai.schemas import ExtractionOut
+from app.modules.ai.schemas import Customer, ExtractionOut
+from app.modules.audit.models import AuditEvent
+from app.modules.audit.service import record_audit_event
+from app.modules.orders.schemas import OrderInput, OrderOut, PricedLine
+from app.modules.orders.service import confirm_order, read_order, save_order, snapshot
 from app.modules.ai.service import extract_order
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.models import User
@@ -96,6 +100,13 @@ def upload_source(actor: Manager, db: Database, text: Annotated[str | None, Form
                           filename=filename)
 
 
+@router.get("/pending-review")
+def pending_review(actor: Manager, db: Database, after_id: Annotated[int, Query(ge=0)] = 0) -> list[int]:
+    return list(db.scalars(select(AIExtraction.order_source_id).where(
+        AIExtraction.status == "needs_review", AIExtraction.order_source_id > after_id,
+    ).order_by(AIExtraction.order_source_id).limit(100)))
+
+
 @router.get("/failed-extractions")
 def failed_extractions(actor: Manager, db: Database, after_id: Annotated[int, Query(ge=0)] = 0) -> list[int]:
     """Return the next 100 source IDs requiring manual handling."""
@@ -139,3 +150,47 @@ def download_source(source_id: int, actor: Manager, db: Database):
         raise HTTPException(404, "Source file not found.")
     return FileResponse(settings.order_source_storage / source.storage_key,
                         filename=source.original_filename, media_type="application/octet-stream")
+
+
+class ReviewedLine(PricedLine):
+    specification: str | None = None
+    customization_notes: str | None = None
+
+
+class ReviewInput(OrderInput):
+    customer: Customer
+    lines: list[ReviewedLine] = Field(min_length=1, max_length=100)
+
+
+@router.post("/{source_id}/confirm")
+def confirm_proposal(source_id: int, data: ReviewInput, actor: Manager, db: Database) -> OrderOut:
+    extraction = db.scalar(select(AIExtraction).where(
+        AIExtraction.order_source_id == source_id).with_for_update())
+    if extraction is None or not extraction.schema_valid or extraction.line_matches is None:
+        raise HTTPException(409, "Extract and match the proposal before confirming.")
+    if extraction.confirmed_order_id is not None:
+        decision = db.scalar(select(AuditEvent).where(
+            AuditEvent.entity_type == "ai_extraction", AuditEvent.entity_id == extraction.id,
+            AuditEvent.action == "ai_extraction.confirmed"))
+        if decision is None or decision.detail["reviewed"] != data.model_dump(mode="json"):
+            raise HTTPException(409, f"This proposal was already confirmed as order #{extraction.confirmed_order_id}.")
+        return snapshot(read_order(db, extraction.confirmed_order_id))
+    if len(data.lines) != len(extraction.line_matches):
+        raise HTTPException(422, "Review every proposed line before confirming.")
+    order_data = OrderInput.model_validate(data.model_dump(
+        exclude={"customer": True, "lines": {"__all__": {"specification", "customization_notes"}}}))
+    try:
+        reason = f"Sales review of order source #{source_id}"
+        draft = save_order(db, order_data, actor.id, commit=False, reason=reason)
+        result = confirm_order(db, read_order(db, draft.id), draft.revision, actor.id, commit=False, reason=reason)
+        extraction.status = "confirmed"
+        extraction.confirmed_order_id = result.id
+        record_audit_event(db, action="ai_extraction.confirmed", entity_type="ai_extraction",
+                           entity_id=extraction.id, actor_user_id=actor.id,
+                           detail={"source_id": source_id, "order_id": result.id,
+                                   "reviewed": data.model_dump(mode="json")})
+        db.commit()
+        return result
+    except Exception:
+        db.rollback()
+        raise

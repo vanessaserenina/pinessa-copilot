@@ -38,7 +38,7 @@ def snapshot(order: Order) -> OrderOut:
     )
 
 
-def finish(db: Session, order: Order, actor_id: int, action: str, reason: str) -> OrderOut:
+def finish(db: Session, order: Order, actor_id: int, action: str, reason: str, *, commit: bool = True) -> OrderOut:
     db.flush()
     result = snapshot(order)
     data = result.model_dump(mode="json")
@@ -46,7 +46,8 @@ def finish(db: Session, order: Order, actor_id: int, action: str, reason: str) -
                          snapshot=data, reason=reason))
     record_audit_event(db, actor_user_id=actor_id, action=action, entity_type="order",
                        entity_id=order.id, detail={"revision": order.revision, "reason": reason})
-    db.commit()
+    if commit:
+        db.commit()
     return result
 
 
@@ -112,9 +113,9 @@ def allocate(db: Session, order: Order, actor_id: int):
         order.status = "ready_for_delivery"
 
 
-def save_order(db: Session, data: OrderInput, actor_id: int, order: Order | None = None) -> OrderOut:
+def save_order(db: Session, data: OrderInput, actor_id: int, order: Order | None = None,
+               *, commit: bool = True, reason: str = "Manual order created") -> OrderOut:
     editing = order is not None
-    reason = "Manual order created"
     if isinstance(data, EditInput) and order is not None:
         check_revision(order, data.revision)
         if order.status in {"partially_dispatched", "dispatched", "delivered"}:
@@ -142,10 +143,11 @@ def save_order(db: Session, data: OrderInput, actor_id: int, order: Order | None
     db.flush()
     if order.status != "draft":
         allocate(db, order, actor_id)
-    return finish(db, order, actor_id, "order.edited" if editing else "order.created", reason)
+    return finish(db, order, actor_id, "order.edited" if editing else "order.created", reason, commit=commit)
 
 
-def confirm_order(db: Session, order: Order, revision: int, actor_id: int) -> OrderOut:
+def confirm_order(db: Session, order: Order, revision: int, actor_id: int, *, commit: bool = True,
+                  reason: str = "Manual order confirmed") -> OrderOut:
     check_revision(order, revision)
     if order.status != "draft":
         raise HTTPException(409, "Only a draft order can be confirmed.")
@@ -153,4 +155,4 @@ def confirm_order(db: Session, order: Order, revision: int, actor_id: int) -> Or
         raise HTTPException(422, "Update the delivery date before confirming.")
     allocate(db, order, actor_id)
     order.revision += 1
-    return finish(db, order, actor_id, "order.confirmed", "Manual order confirmed")
+    return finish(db, order, actor_id, "order.confirmed", reason, commit=commit)

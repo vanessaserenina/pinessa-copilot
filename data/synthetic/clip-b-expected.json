@@ -1,0 +1,15 @@
+{
+  "requested_line": {
+    "requested_text": "2.50 cases of blue clips, SKU CLIP-B",
+    "stated_sku": "CLIP-B",
+    "quantity": "2.5",
+    "unit": "cases",
+    "specification": null,
+    "customization_notes": null
+  },
+  "scenarios": [
+    {"catalogue_sku": "CLIP-B", "colour": "blue", "expected_status": "auto", "expected_method": "sku"},
+    {"catalogue_sku": "CLIP-B", "colour": "red", "expected_status": "needs_review", "expected_method": "sku"},
+    {"catalogue_sku": "CLIP-X", "colour": "blue", "expected_status": "needs_review", "expected_method": "text"}
+  ]
+}
