@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
     order_duplicate_days: int = 7
+    order_source_storage: Path = ROOT_DIR / "storage" / "order-sources"
+    order_source_upload_limit: int = 10 * 1024 * 1024
     delivery_storage: Path = ROOT_DIR / "storage" / "deliveries"
     delivery_upload_limit: int = 10 * 1024 * 1024
     dev_seed_password: str | None = None
