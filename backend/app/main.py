@@ -8,6 +8,7 @@ from app.api.auth import router as auth_router
 from app.api.deliveries import router as deliveries_router
 from app.api.health import router as health_router
 from app.api.inventory import router as inventory_router
+from app.api.order_sources import router as order_sources_router
 from app.api.orders import router as orders_router
 from app.api.production import router as production_router
 from app.api.purchasing import router as purchasing_router
@@ -35,6 +36,7 @@ app.include_router(audit_router, prefix="/api")
 app.include_router(products_router, prefix="/api")
 app.include_router(boms_router, prefix="/api")
 app.include_router(inventory_router, prefix="/api")
+app.include_router(order_sources_router, prefix="/api")
 app.include_router(orders_router, prefix="/api")
 app.include_router(purchasing_router, prefix="/api")
 app.include_router(production_router, prefix="/api")

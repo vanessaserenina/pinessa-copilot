@@ -48,3 +48,15 @@ class OrderRevision(TimestampMixin, Base):
     actor_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     reason: Mapped[str] = mapped_column(String(500))
     snapshot: Mapped[dict] = mapped_column(JSONB)
+
+class OrderSource(TimestampMixin, Base):
+    __tablename__ = "order_sources"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    source_type: Mapped[str] = mapped_column(String(12))
+    raw_text: Mapped[str | None]
+    original_filename: Mapped[str | None] = mapped_column(String(255))
+    storage_key: Mapped[str | None] = mapped_column(String(32))
+    content_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    submitted_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String(20), default="received")
