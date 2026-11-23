@@ -61,3 +61,30 @@ def test_native_and_scanned_pages_in_order(tmp_path):
     native, ocr = convert_file("pdf", path).split("\n\n")
     assert native == "Native SKU 4321"
     assert "ORDER12345" in ocr.replace(" ", "")
+
+
+def test_native_and_scanned_text_on_same_page(tmp_path):
+    path = tmp_path / "mixed.pdf"
+    with closing(pdfium.PdfDocument(text_page())) as document, closing(document[0]) as page:
+        image = pdfium.PdfImage.new(document)
+        with closing(pdfium.PdfBitmap.from_pil(order_image())) as bitmap:
+            image.set_bitmap(bitmap)
+            image.set_matrix(pdfium.PdfMatrix(300, 0, 0, 60, 10, 10))
+            page.insert_obj(image)
+            page.gen_content()
+            document.save(path)
+    text = convert_file("pdf", path)
+    assert text.splitlines()[0] == "Native SKU 4321"
+    assert text.replace(" ", "").splitlines()[1:] == ["ORDER12345"]
+
+
+def test_blank_pages_preserve_readable_text(tmp_path):
+    path = tmp_path / "with-blanks.pdf"
+    white_scan = BytesIO()
+    Image.new("RGB", (400, 150), "white").save(white_scan, format="PDF")
+    with closing(pdfium.PdfDocument(text_page())) as document:
+        document.new_page(400, 150, index=0).close()
+        with closing(pdfium.PdfDocument(white_scan.getvalue())) as scanned:
+            document.import_pages(scanned)
+            document.save(path)
+    assert convert_file("pdf", path) == "Native SKU 4321"

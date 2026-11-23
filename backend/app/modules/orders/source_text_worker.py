@@ -30,6 +30,34 @@ def image_text(image):
     return "\n".join(line[1] for line in lines)
 
 
+def pdf_page_text(page, layer):
+    import pypdfium2.raw as pdfium_c
+    from PIL import ImageDraw
+
+    native = layer.get_text_bounded()
+    if native.strip() and next(page.get_objects(filter=[pdfium_c.FPDF_PAGEOBJ_IMAGE]), None) is None:
+        return native
+
+    width, height = page.get_size()
+    if ceil(width * 2) * ceil(height * 2) > MAX_PIXELS:
+        raise ValueError("Page too large")
+    with closing(page.render(scale=2)) as bitmap:
+        image = bitmap.to_pil().convert("RGB")
+        if native.strip():
+            # Mask text already captured by PDFium so OCR doesn't duplicate native lines.
+            coords = bitmap.get_posconv(page)
+            draw = ImageDraw.Draw(image)
+            for index in range(layer.count_rects()):
+                left, bottom, right, top = layer.get_rect(index)
+                x1, y1 = coords.to_bitmap(left, bottom)
+                x2, y2 = coords.to_bitmap(right, top)
+                draw.rectangle((min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)), fill="white")
+        if image.getextrema() == ((255, 255),) * 3:
+            return native
+        scanned = image_text(image)
+    return f"{native}\n{scanned}" if native.strip() else scanned
+
+
 def pdf_text(path):
     import pypdfium2 as pdfium
 
@@ -41,14 +69,10 @@ def pdf_text(path):
             with closing(document[index]) as page, closing(page.get_textpage()) as layer:
                 if layer.count_chars() > MAX_CHARS - output.tell():
                     raise ValueError("Too much text")
-                text = layer.get_text_bounded()
+                text = pdf_page_text(page, layer)
                 if not text.strip():
-                    width, height = page.get_size()
-                    if ceil(width * 2) * ceil(height * 2) > MAX_PIXELS:
-                        raise ValueError("Page too large")
-                    with closing(page.render(scale=2)) as bitmap:
-                        text = image_text(bitmap.to_pil())
-                if index:
+                    continue
+                if output.tell():
                     output.write("\n\n")
                 output.write(text)
                 if output.tell() > MAX_CHARS:
