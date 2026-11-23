@@ -32,3 +32,19 @@ python -m pytest tests/integration/test_pilot_evaluation.py -qs
 ```
 
 This first batch measures single-line intake with a small controlled catalogue. Multi-line orders, PDF/OCR, XLSX, duplicate orders, stock shortages and lifecycle scenarios remain for the broader pilot. The next batch should retain missing quantities, unstated SKUs, and CSV customer names as explicit regression cases.
+
+## Quantity follow-up
+
+The pre-fix rerun on the local model reproduced 35/40 raw fields and 7/8 routing decisions. These were the five discrepancies recorded from the schema-valid replies before scoring Sales review.
+
+| Case and field | Model value | Frozen expectation | Source evidence |
+|---|---|---|---|
+| Missing quantity | `1.0` | null | “Blue clips, SKU CLIP-B.” |
+| Ambiguous colour, quantity | null | `8` | The model copied “8 cases of clips” into the description. |
+| Description-only CSV, customer | Acorn Hotel | TEST Acorn Hotel | The customer cell includes the prefix TEST. |
+| Unknown-SKU CSV, customer | Acorn Hotel | TEST Acorn Hotel | The same prefix was dropped. |
+| Approved alias, stated SKU | desk fasteners | null | The product description is an approved alias. The source gives no SKU. The matcher referred the purported unknown SKU to Sales. |
+
+The review API pairs each proposed description with a unique source clause. An explicit quantity in a recognized “number + unit + of + description” phrase retains its source spelling. Unsupported phrasing, competing clauses and missing evidence leave the field for Sales. The UI also leaves the confirmed quantity blank for fractional amounts or incompatible catalogue units. Confirmation requires Sales to submit a positive whole-unit quantity. The confirmation audit stores that submission alongside the source and order IDs. The original text, raw model replies and validated proposal remain available for comparison.
+
+The opt-in evaluator prints the observed raw fields, source quantity shown to Sales, automatic SKU, and final confirmed line for each original case. The five additional scenarios have separate expectations in `data/synthetic/pilot-extended.json`. Each starts with 20 cases per SKU. The duplicate case resubmits identical source content. The shortage case requests 24 cases without a BOM and expects confirmation to fail with stock intact.

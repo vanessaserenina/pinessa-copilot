@@ -22,7 +22,8 @@ from sqlalchemy.orm import Session
 
 
 @pytest.mark.skipif(not os.environ.get("PINESSA_PLAYWRIGHT"), reason="Optional live browser gate")
-def test_sales_browser_confirmation(migrated_db, new_product, make_user, tmp_path, monkeypatch):
+@pytest.mark.parametrize("scenario", ["fractional", "missing"])
+def test_sales_browser_confirmation(migrated_db, new_product, make_user, tmp_path, monkeypatch, scenario):
     monkeypatch.setattr(settings, "order_source_storage", tmp_path)
     db = migrated_db
     product = new_product(unit="case")
@@ -33,7 +34,8 @@ def test_sales_browser_confirmation(migrated_db, new_product, make_user, tmp_pat
     password = secrets.token_urlsafe()
     user = make_user("sales", password=password)
     db.commit()
-    env = {**os.environ, "PINESSA_TEST_EMAIL": user.email, "PINESSA_TEST_PASSWORD": password}
+    env = {**os.environ, "PINESSA_TEST_EMAIL": user.email, "PINESSA_TEST_PASSWORD": password,
+           "PINESSA_QUANTITY_SCENARIO": scenario}
     root = Path(__file__).resolve().parents[3]
     server_app = FastAPI()
     server_app.include_router(app.router)
@@ -58,6 +60,8 @@ def test_sales_browser_confirmation(migrated_db, new_product, make_user, tmp_pat
             assert order.status == "ready_for_delivery" and order.items[0].quantity == 3
             audit = db.scalars(select(AuditEvent).where(AuditEvent.action == "ai_extraction.confirmed")).one()
             assert audit.detail["order_id"] == order.id
+            assert audit.detail["reviewed"]["lines"][0]["quantity"] == 3
+            assert db.get(Inventory, product.id).available == 7
         finally:
             server.should_exit = True
             thread.join(8)

@@ -250,6 +250,47 @@ def test_review_corrections_confirmation_and_retry(client, db, source, mock_llm,
     assert client.get(url + "/extraction", headers=headers).json()["confirmed_order_id"] == order["id"]
 
 
+def test_invented_quantity_requires_sales_entry(client, db, mock_llm, new_product, make_user,
+                                                headers_for, monkeypatch):
+    from app.modules.inventory.models import Inventory
+
+    monkeypatch.setattr(settings, "llm_model", "synthetic-test-model")
+    product = new_product(unit="case")
+    product.sku, product.name = "CLIP-B", "Blue clips"
+    db.add(Inventory(product_id=product.id, available=10))
+    db.commit()
+    headers = headers_for(make_user("sales"))
+    text = "PO TEST-7. Delivery 2027-07-07. Blue clips, SKU CLIP-B."
+    source = client.post("/api/order-sources", headers=headers, data={"text": text}).json()
+    url = f"/api/order-sources/{source['id']}"
+    assert client.post(url + "/extract-text", headers=headers).json()["raw_text"] == text
+    line = {**EXPECTED["lines"][0], "requested_text": "Blue clips, SKU CLIP-B", "quantity": "7"}
+    raw = json.dumps({**EXPECTED, "lines": [line]})
+    mock_llm(("stop", raw))
+    proposal = client.post(url + "/extract-order", headers=headers).json()
+    match, = proposal["line_matches"]
+    assert match["selected_product_id"] == product.id
+    assert match["source_quantity"] is None
+    assert db.get(AIExtraction, proposal["id"]).raw_output == [raw]
+    reviewed = {"product_id": product.id, "unit_price": "1"}
+    payload = {"customer": EXPECTED["customer"], "customer_code": "ACORN", "currency": "SGD",
+               "lines": [reviewed]}
+    for invalid in ({}, {"quantity": None}, {"quantity": ""}, {"quantity": 0},
+                    {"quantity": -1}, {"quantity": 2.5}):
+        response = client.post(url + "/confirm", headers=headers,
+                               json={**payload, "lines": [{**reviewed, **invalid}]})
+        assert response.status_code == 422
+    assert db.scalar(select(func.count()).select_from(Order)) == 0
+    assert db.get(Inventory, product.id).available == 10
+    reviewed["quantity"] = 3
+    reply = client.post(url + "/confirm", headers=headers, json=payload)
+    assert reply.status_code == 200, reply.text
+    assert reply.json()["lines"][0]["quantity"] == 3
+    assert db.get(Inventory, product.id).available == 7
+    event = db.scalars(select(AuditEvent).where(AuditEvent.action == "ai_extraction.confirmed")).one()
+    assert event.detail["reviewed"]["lines"][0]["quantity"] == 3
+
+
 @pytest.mark.skipif(not settings.llm_model, reason="Requires a configured local model")
 def test_live_synthetic_review(client, db, make_user, headers_for, new_product):
     from app.modules.inventory.models import Inventory

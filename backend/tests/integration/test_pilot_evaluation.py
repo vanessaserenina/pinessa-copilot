@@ -2,6 +2,7 @@
 import json
 import os
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -28,10 +29,8 @@ def same_quantity(actual, expected):
     return Decimal(actual) == Decimal(expected)
 
 
-@pytest.mark.parametrize("case_file", CASES, ids=lambda path: path.stem)
-def test_pilot_order(case_file, db, client, make_user, headers_for, new_product, monkeypatch, tmp_path):
-    case = json.loads(case_file.read_text())
-    expected = case["expected"]
+@pytest.fixture()
+def products(db, new_product, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "order_source_storage", tmp_path)
     products = {}
     for sku, colour in [("CLIP-B", "blue"), ("CLIP-R", "red")]:
@@ -44,6 +43,13 @@ def test_pilot_order(case_file, db, client, make_user, headers_for, new_product,
     db.add(ProductAlias(product_id=products["CLIP-B"].id, alias_text="desk fasteners",
                         alias_normalized="desk fasteners", status="approved"))
     db.commit()
+    return products
+
+
+@pytest.mark.parametrize("case_file", CASES, ids=lambda path: path.stem)
+def test_pilot_order(case_file, db, client, make_user, headers_for, products):
+    case = json.loads(case_file.read_text())
+    expected = case["expected"]
     headers = headers_for(make_user("sales"))
     if case["format"] == "csv":
         payload = {"files": {"file": (case_file.stem + ".csv", case["source"].encode(), "text/csv")}}
@@ -79,10 +85,18 @@ def test_pilot_order(case_file, db, client, make_user, headers_for, new_product,
                    auto_skus == ([expected["auto_sku"]] if expected["auto_sku"] else []))
     assert db.scalar(select(func.count()).select_from(Order)) == 0
     result = {"case": case_file.stem, "fields": fields, "lines": len(lines),
+              "observed": {"customer": (output.get("customer") or {}).get("name"),
+                           "quantity": line.get("quantity"), "stated_sku": line.get("stated_sku"),
+                           "requested_text": line.get("requested_text")},
+              "expected": {key: expected[key] for key in ("customer", "quantity", "stated_sku")},
               "auto": auto_skus, "right_route": right_route,
               "wrong_auto": len(auto_skus) - int(expected["auto_sku"] in auto_skus)}
-    print("PILOT_RESULT " + json.dumps(result), flush=True)
+    evidence = matches[0]["source_quantity"] if len(matches) == 1 else None
+    result["review_quantity"] = evidence["quantity"] if evidence else None
+    result["review_quantity_correct"] = len(matches) == 1 and same_quantity(result["review_quantity"], expected["quantity"])
+    result["confirmed"] = None
     if expected["confirmed_sku"] is None:
+        print("PILOT_RESULT " + json.dumps(result), flush=True)
         return
     # Simulate Sales verifying the source and submitting the agreed fields and SKU.
     reviewed = {"customer": {"name": expected["customer"], "code": "TEST-ACORN",
@@ -98,3 +112,66 @@ def test_pilot_order(case_file, db, client, make_user, headers_for, new_product,
     assert Decimal(order["stock"]["finished_goods"][0]["shortfall"]) == expected["shortfall"]
     event = db.scalars(select(AuditEvent).where(AuditEvent.action == "ai_extraction.confirmed")).one()
     assert event.detail["source_id"] == source_id and event.detail["order_id"] == order["id"]
+    assert order["lines"][0]["quantity"] == int(expected["quantity"])
+    assert order["lines"][0]["product_id"] == products[expected["confirmed_sku"]].id
+    result["confirmed"] = [expected["confirmed_sku"], order["lines"][0]["quantity"]]
+    print("PILOT_RESULT " + json.dumps(result), flush=True)
+
+
+EXTENDED = json.loads((CASES[0].parent.parent / "pilot-extended.json").read_text())
+
+
+def upload_payload(case):
+    if case["format"] == "text":
+        return {"data": {"text": case["source"]}}
+    stream = BytesIO()
+    if case["format"] == "xlsx":
+        from openpyxl import Workbook
+        book = Workbook()
+        book.active.append([case["source"]])
+        book.save(stream)
+        book.close()
+    else:
+        from PIL import Image, ImageDraw, ImageFont
+        page = Image.new("RGB", (1250, 240), "white")
+        ImageDraw.Draw(page).multiline_text((30, 30), case["source"], fill="black",
+                                            font=ImageFont.load_default(size=32), spacing=18)
+        page.save(stream, format="PDF", resolution=144)
+    return {"files": {"file": ("order." + case["format"], stream.getvalue())}}
+
+
+@pytest.mark.parametrize("case", EXTENDED, ids=lambda case: case["case"])
+def test_extended_pilot(case, db, client, make_user, headers_for, products):
+    headers = headers_for(make_user("sales"))
+    payload = upload_payload(case)
+    response = client.post("/api/order-sources", headers=headers, **payload)
+    assert response.status_code == 201, response.text
+    url = f"/api/order-sources/{response.json()['id']}"
+    if "repeat_upload" in case:
+        repeat = client.post("/api/order-sources", headers=headers, **payload)
+        assert repeat.status_code == case["repeat_upload"] and repeat.headers["location"] == url
+    source = client.post(url + "/extract-text", headers=headers).json()
+    assert source["status"] == "text_extracted", source
+    proposal = client.post(url + "/extract-order", headers=headers).json()
+    matches = proposal["line_matches"] or []
+    skus = {p.id: sku for sku, p in products.items()}
+    auto = [skus.get(m["selected_product_id"]) for m in matches]
+    evidence = [(m["source_quantity"] or {}).get("quantity") for m in matches]
+    raw = [line["quantity"] for line in (proposal["validated_output"] or {}).get("lines", [])]
+    print("EXTENDED_RESULT " + json.dumps({"case": case["case"], "auto": auto,
+          "review_quantity": evidence, "raw_quantity": raw, "source_text": source["raw_text"]}), flush=True)
+    lines = [{"product_id": products[sku].id, "quantity": qty, "unit_price": "1.00"}
+             for sku, qty in zip(case["expected_skus"], case["sales_quantities"], strict=True)]
+    order = client.post(url + "/confirm", headers=headers, json={
+        "customer": {"name": "TEST Larch Hotel", "code": "LARCH", "contact_name": None,
+                     "email": None, "phone": None, "delivery_address": None},
+        "customer_code": "LARCH", "currency": "SGD", "lines": lines})
+    assert order.status_code == case["confirmation"], order.text
+    assert [db.get(Inventory, line["product_id"]).available for line in lines] == case["available"]
+    if order.status_code == 200:
+        assert order.json()["status"] == "ready_for_delivery"
+        assert [line["quantity"] for line in order.json()["lines"]] == case["sales_quantities"]
+    else:
+        assert db.scalar(select(func.count()).select_from(Order)) == 0
+    assert auto == case["expected_skus"]
+    assert evidence == case["expected_quantities"]

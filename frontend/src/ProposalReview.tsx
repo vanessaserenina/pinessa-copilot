@@ -7,7 +7,8 @@ type Source = { id: number; raw_text: string | null; original_filename: string |
 type Line = { requested_text: string; stated_sku: string | null; quantity: string | null; unit: string | null;
   specification: string | null; customization_notes: string | null };
 type Candidate = { product_id: number; sku: string; name: string; unit: string; method: string; attributes?: Record<string, unknown> };
-type Match = { normalized_unit: string | null; selected_product_id: number | null; reason: string | null; candidates: Candidate[] };
+type Match = { source_quantity: { quantity: string; unit: string; normalized_unit: string } | null;
+  selected_product_id: number | null; reason: string | null; candidates: Candidate[] };
 type Proposal = { confirmed_order_id: number | null; error_message: string | null; line_matches: Match[] | null;
   validated_output: { customer: Record<string, string | null> | null; customer_po_number: string | null;
     requested_delivery_date: string | null; lines: Line[] } | null };
@@ -23,9 +24,15 @@ function ReviewLine({ api, line, match, index }: { api: Api; line: Line; match: 
     product_id: p.id, sku: p.sku, name: p.name, unit: p.unit_of_measure, method: "search",
   }));
   if (selected) choices.set(selected.product_id, selected);
+  const evidence = match.source_quantity;
+  const initialQuantity = evidence && selected
+    && [evidence.normalized_unit, evidence.unit.toLowerCase()].includes(selected.unit.toLowerCase())
+    && /^\d+(?:\.0+)?$/.test(evidence.quantity) && Number(evidence.quantity) >= 1
+    && Number(evidence.quantity) <= 10000000 ? evidence.quantity : "";
   return <fieldset><legend>Line {index + 1}</legend>
     <p>{line.requested_text}</p>
-    <p>{[line.stated_sku, [line.quantity, line.unit].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}</p>
+    {line.stated_sku && <p>{line.stated_sku}</p>}
+    <p>{evidence ? `Requested quantity: ${evidence.quantity} ${evidence.unit}` : "Check the source and enter the quantity agreed with the customer."}</p>
     {match.reason && <p className="notice">{match.reason}</p>}
     <label>Search catalogue<input value={search} onChange={e => setSearch(e.target.value)} maxLength={100} /></label>
     {found.error && <p role="alert">{found.error}</p>}
@@ -39,7 +46,7 @@ function ReviewLine({ api, line, match, index }: { api: Api; line: Line; match: 
         <dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl>}
     <label>Confirmed quantity {selected && `(${selected.unit})`}<input type="number" required min="1" max="10000000"
       name={`quantity-${index}`} key={selected?.product_id ?? "none"}
-      defaultValue={selected && [match.normalized_unit, line.unit?.toLowerCase()].includes(selected.unit.toLowerCase()) ? line.quantity ?? "" : ""} /></label>
+      step="1" defaultValue={initialQuantity} /></label>
     <label>Unit price<input name={`price-${index}`} type="number" required min="0" step="0.0001" /></label>
     <label>Specification<input name={`spec-${index}`} defaultValue={line.specification ?? ""} /></label>
     <label>Customization notes<input name={`notes-${index}`} defaultValue={line.customization_notes ?? ""} /></label>
