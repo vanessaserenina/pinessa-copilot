@@ -6,7 +6,7 @@ or alias. LLM_PORT defaults to 8080. Requests go directly to the loopback interf
 import json
 
 import httpx
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from app.core.config import settings
 from app.modules.ai.schemas import StructuredOrder
@@ -38,6 +38,10 @@ class ProviderUnavailable(Exception):
     pass
 
 
+class ContextWindowExceeded(Exception):
+    pass
+
+
 def request_order(text: str, model: str, retry_hint: str | None) -> Choice:
     schema = StructuredOrder.model_json_schema()
     instruction = INSTRUCTIONS + json.dumps(schema, ensure_ascii=False)
@@ -57,7 +61,11 @@ def request_order(text: str, model: str, retry_hint: str | None) -> Choice:
             f"http://127.0.0.1:{settings.llm_port}/v1/chat/completions", json=payload,
             timeout=90, trust_env=False,
         )
+        if response.status_code == 400:
+            match response.json():
+                case {"error": {"type": "exceed_context_size_error"}}:
+                    raise ContextWindowExceeded
         response.raise_for_status()
         return Reply.model_validate_json(response.content).choices[0]
-    except (httpx.HTTPError, ValidationError, IndexError) as exc:
+    except (httpx.HTTPError, ValueError, IndexError) as exc:
         raise ProviderUnavailable from exc

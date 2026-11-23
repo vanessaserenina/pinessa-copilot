@@ -28,9 +28,12 @@ def extract_order(db: Session, source_id: int, actor_id: int) -> AIExtraction:
     outputs = []
     error = None
     validated = None
-    for _ in range(2):
+    for attempt in (1, 2):
         try:
             choice = provider.request_order(source.raw_text, model, error)
+        except provider.ContextWindowExceeded:
+            error = "The source exceeds the model's context window and requires manual handling."
+            break
         except provider.ProviderUnavailable as exc:
             raise HTTPException(503, "The local extraction provider is unavailable.") from exc
         outputs.append(choice.message.content)
@@ -58,6 +61,6 @@ def extract_order(db: Session, source_id: int, actor_id: int) -> AIExtraction:
     record_audit_event(db, action=f"ai_extraction.{extraction.status}", entity_type="ai_extraction",
                        entity_id=extraction.id, actor_user_id=actor_id,
                        detail={"source_id": source_id, "model": model, "prompt_version": extraction.prompt_version,
-                               "attempts": len(outputs)})
+                               "attempts": attempt})
     db.commit()
     return extraction

@@ -55,6 +55,8 @@ def mock_llm(monkeypatch):
             reply = replies[len(calls) - 1]
             if isinstance(reply, Exception):
                 raise reply
+            if isinstance(reply, httpx.Response):
+                return reply
             reason, content = reply
             return httpx.Response(200, request=httpx.Request("POST", url), json={
                 "choices": [{"finish_reason": reason, "message": {"content": content}}],
@@ -116,12 +118,32 @@ def test_failed_validation_routes_to_manual_queue(client, source, mock_llm):
     assert len(calls) == 2
 
 
-def test_unavailable_provider_allows_later_retry(client, db, source, mock_llm, monkeypatch):
+def test_context_window_failure_queues_source_once(client, db, source, mock_llm):
+    url, headers = source
+    calls = mock_llm(httpx.Response(400, json={"error": {"type": "exceed_context_size_error"}}))
+    response = client.post(url + "/extract-order", headers=headers)
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "needs_manual_handling" and not result["schema_valid"]
+    assert result["validated_output"] is None and "context window" in result["error_message"]
+    assert client.get("/api/order-sources/failed-extractions", headers=headers).json() == [result["order_source_id"]]
+    assert client.post(url + "/extract-order", headers=headers).json() == result
+    assert len(calls) == 1
+    assert db.get(AIExtraction, result["id"]).raw_output == []
+    audit = db.scalar(select(AuditEvent).where(AuditEvent.action == "ai_extraction.needs_manual_handling"))
+    assert audit.detail["attempts"] == 1
+
+
+@pytest.mark.parametrize("outage", [
+    httpx.ConnectError("offline"),
+    httpx.Response(503, request=httpx.Request("POST", "http://localhost")),
+])
+def test_unavailable_provider_allows_later_retry(client, db, source, mock_llm, monkeypatch, outage):
     url, headers = source
     with monkeypatch.context() as config:
         config.setattr(settings, "llm_model", None)
         assert client.post(url + "/extract-order", headers=headers).status_code == 503
-    mock_llm(httpx.ConnectError("offline"))
+    mock_llm(outage)
     assert client.post(url + "/extract-order", headers=headers).status_code == 503
     assert db.scalar(select(func.count()).select_from(AIExtraction)) == 0
     mock_llm(("stop", json.dumps(EXPECTED)))
