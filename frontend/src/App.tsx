@@ -3,6 +3,8 @@ import type { FormEvent } from "react";
 import { ApiError, errorMessage, request } from "./api";
 import type { Api, User } from "./api";
 import { Catalogue } from "./Catalogue";
+import { Dashboard } from "./Dashboard";
+import { ProposalReview } from "./ProposalReview";
 import { ManualOrders } from "./ManualOrders";
 import { ProductDetailScreen } from "./ProductDetailScreen";
 import "./App.css";
@@ -60,15 +62,17 @@ function productFromHash() {
 
 function Workspace({ user, api, onSignOut }: { user: User; api: Api; onSignOut: () => void }) {
   const [productId, setProductId] = useState(productFromHash);
-  const [ordersRoute, setOrdersRoute] = useState(window.location.hash === "#/orders");
+  const [route, setRoute] = useState(window.location.hash);
   const canManageOrders = ["sales", "admin"].includes(user.role);
-  const showOrders = ordersRoute && canManageOrders;
+  const showOrders = route === "#/orders" && canManageOrders;
+  const showDashboard = route === "#/dashboard";
+  const showReview = route === "#/review" && canManageOrders;
   const [catalogueRevision, setCatalogueRevision] = useState(0);
 
   useEffect(() => {
     function navigate() {
       setProductId(productFromHash());
-      setOrdersRoute(window.location.hash === "#/orders");
+      setRoute(window.location.hash);
       window.scrollTo(0, 0);
     }
     window.addEventListener("hashchange", navigate);
@@ -80,22 +84,26 @@ function Workspace({ user, api, onSignOut }: { user: User; api: Api; onSignOut: 
       <aside className="sidebar">
         <Brand />
         <nav aria-label="Main navigation">
-          <a href="#/products" aria-current={productId || showOrders ? undefined : "page"}>
+          <a href="#/dashboard" aria-current={showDashboard ? "page" : undefined}>Dashboard</a>
+          <a href="#/products" aria-current={productId || showOrders || showReview || showDashboard ? undefined : "page"}>
             <span className="catalogue-icon" aria-hidden="true" /> Catalogue
           </a>
           {canManageOrders && <a href="#/orders" aria-current={showOrders ? "page" : undefined}>Orders</a>}
+          {canManageOrders && <a href="#/review" aria-current={showReview ? "page" : undefined}>Order intake</a>}
         </nav>
       </aside>
       <div className="workspace-body">
         <header className="topbar">
-          <span className="topbar-title">{showOrders ? "Order workspace" : "Product workspace"}</span>
+          <span className="topbar-title">{showDashboard ? "Operations" : showOrders || showReview ? "Order workspace" : "Product workspace"}</span>
           <div className="account">
             <div className="account-name"><strong>{user.full_name}</strong><small>{user.role}</small></div>
             <button className="secondary" onClick={onSignOut}>Sign out</button>
           </div>
         </header>
         <main className="content">
-          <div hidden={productId !== null || showOrders}><Catalogue api={api} revision={catalogueRevision} /></div>
+          <div hidden={productId !== null || showOrders || showReview || showDashboard}><Catalogue api={api} revision={catalogueRevision} /></div>
+          {showDashboard && <Dashboard api={api} />}
+          {showReview && <ProposalReview api={api} />}
           {showOrders && <ManualOrders api={api} />}
           {productId && <ProductDetailScreen key={productId} id={productId} api={api} isAdmin={user.role === "admin"}
             onBomChange={() => setCatalogueRevision((revision) => revision + 1)} />}

@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 
 from app.api.audit_events import router as audit_router
 from app.api.auth import router as auth_router
+from app.api.dashboard import router as dashboard_router
 from app.api.deliveries import router as deliveries_router
 from app.api.health import router as health_router
 from app.api.inventory import router as inventory_router
@@ -41,3 +42,4 @@ app.include_router(orders_router, prefix="/api")
 app.include_router(purchasing_router, prefix="/api")
 app.include_router(production_router, prefix="/api")
 app.include_router(deliveries_router, prefix="/api")
+app.include_router(dashboard_router, prefix="/api")

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.modules.ai import provider
+from app.modules.ai.matching import match_lines
 from app.modules.ai.models import AIExtraction
 from app.modules.ai.schemas import StructuredOrder
 from app.modules.audit.service import record_audit_event
@@ -18,6 +19,9 @@ def extract_order(db: Session, source_id: int, actor_id: int) -> AIExtraction:
         raise HTTPException(404, "Order source not found.")
     previous = db.scalar(select(AIExtraction).where(AIExtraction.order_source_id == source_id))
     if previous is not None:
+        if previous.status == "needs_review" and previous.line_matches is None:
+            previous.line_matches = match_lines(db, StructuredOrder.model_validate(previous.validated_output).lines)
+            db.commit()
         return previous
     if source.status != "text_extracted" or not source.raw_text:
         raise HTTPException(409, "Extract source text before requesting an order proposal.")
@@ -48,13 +52,14 @@ def extract_order(db: Session, source_id: int, actor_id: int) -> AIExtraction:
             error = f"Output failed schema validation ({issue['type']}). Return all required fields with the specified types."
             continue
         validated = order.model_dump(mode="json")
-        error = None
+        error = None if 1 <= len(order.lines) <= 100 else "Confirmation requires 1 to 100 order lines."
         break
 
     extraction = AIExtraction(
         order_source_id=source_id, model_name=model, prompt_version=provider.PROMPT_VERSION,
+        line_matches=match_lines(db, order.lines) if error is None else None,
         raw_output=outputs, validated_output=validated, schema_valid=validated is not None,
-        status="needs_review" if validated is not None else "needs_manual_handling", error_message=error,
+        status="needs_review" if error is None else "needs_manual_handling", error_message=error,
     )
     db.add(extraction)
     db.flush()

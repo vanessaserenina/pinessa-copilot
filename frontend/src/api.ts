@@ -94,6 +94,7 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
   }
 
   if (response.status === 204) return undefined as T;
+  if (new Headers(options?.headers).get("Accept") === "application/octet-stream") return response.blob() as Promise<T>;
   return response.json() as Promise<T>;
 }
 

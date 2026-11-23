@@ -1,4 +1,6 @@
 import json
+from datetime import date, timedelta
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
@@ -183,3 +185,137 @@ def test_concurrent_submissions_share_one_proposal(db, source, mock_llm):
         second = workers.submit(submit)
         assert first.result() == second.result()
     assert len(calls) == 1
+
+CLIP_FIXTURE = json.loads((Path(__file__).resolve().parents[3] /
+                          "data/synthetic/clip-b-expected.json").read_text())
+
+
+@pytest.mark.parametrize("scenario", CLIP_FIXTURE["scenarios"])
+def test_clip_variant_from_original_wording(client, db, source, mock_llm, new_product, scenario):
+    catalogue_sku = scenario["catalogue_sku"]
+    colour = scenario["colour"]
+    accepted = scenario["expected_status"] == "auto"
+    product = new_product(unit="case")
+    product.sku = catalogue_sku
+    product.name = f"{colour.title()} clips"
+    product.attributes = {"colour": colour}
+    db.commit()
+    line = CLIP_FIXTURE["requested_line"]
+    mock_llm(("stop", json.dumps({**EXPECTED, "lines": [line]})))
+    url, headers = source
+    response = client.post(url + "/extract-order", headers=headers)
+    assert response.status_code == 200, response.text
+    match, = response.json()["line_matches"]
+    assert match["requested_text"] == line["requested_text"]
+    assert match["method"] == scenario["expected_method"]
+    assert match["normalized_unit"] == "case"
+    assert match["candidates"][0]["product_id"] == product.id
+    assert match["status"] == ("auto" if accepted else "needs_review")
+    assert match["selected_product_id"] == (product.id if accepted else None)
+    assert client.get(url + "/extraction", headers=headers).json()["line_matches"] == [match]
+
+
+def test_review_corrections_confirmation_and_retry(client, db, source, mock_llm, new_product):
+    from app.modules.inventory.models import Inventory
+
+    product = new_product()
+    product.name = "Blue clips"
+    db.commit()
+    mock_llm(("stop", json.dumps(EXPECTED)))
+    url, headers = source
+    proposal = client.post(url + "/extract-order", headers=headers).json()
+    assert proposal["line_matches"][0]["selected_product_id"] is None
+    assert db.scalar(select(func.count()).select_from(Order)) == 0
+    review = {"customer": {**EXPECTED["customer"], "code": "ACORN"}, "customer_code": "ACORN",
+              "customer_po_number": "TEST-CORRECTED", "requested_delivery_date": (date.today() + timedelta(days=30)).isoformat(),
+              "currency": "SGD", "lines": [{"product_id": product.id, "quantity": 25,
+              "unit_price": "1.20", "specification": "blue", "customization_notes": None}]}
+    # No BOM or stock. A failed confirmation must also roll back draft creation.
+    failure = client.post(url + "/confirm", headers=headers, json=review)
+    assert failure.status_code == 422, failure.text
+    assert db.scalar(select(func.count()).select_from(Order)) == 0
+    db.add(Inventory(product_id=product.id, available=50))
+    db.commit()
+    response = client.post(url + "/confirm", headers=headers, json=review)
+    assert response.status_code == 200, response.text
+    order = response.json()
+    assert order["customer_po_number"] == "TEST-CORRECTED"
+    assert order["status"] == "ready_for_delivery" and order["lines"][0]["quantity"] == 25
+    assert client.post(url + "/confirm", headers=headers, json=review).json()["id"] == order["id"]
+    assert db.get(Inventory, product.id).available == 25
+    assert db.scalar(select(func.count()).select_from(Order)) == 1
+    audit = db.scalars(select(AuditEvent).where(AuditEvent.action == "ai_extraction.confirmed")).one()
+    assert audit.detail["order_id"] == order["id"] and audit.entity_id == proposal["id"]
+    assert audit.detail["reviewed"]["lines"][0]["specification"] == "blue"
+    assert client.get(url + "/extraction", headers=headers).json()["confirmed_order_id"] == order["id"]
+
+
+@pytest.mark.skipif(not settings.llm_model, reason="Requires a configured local model")
+def test_live_synthetic_review(client, db, make_user, headers_for, new_product):
+    from app.modules.inventory.models import Inventory
+
+    product = new_product(unit="case")
+    product.sku = "CLIP-B"
+    product.name = "Blue clips"
+    product.attributes = {"colour": "blue"}
+    db.add(Inventory(product_id=product.id, available=10))
+    db.commit()
+    headers = headers_for(make_user("sales"))
+    uploaded = client.post("/api/order-sources", data={"text": TEXT}, headers=headers)
+    assert uploaded.status_code == 201
+    url = f"/api/order-sources/{uploaded.json()['id']}"
+    assert client.post(url + "/extract-text", headers=headers).status_code == 200
+    response = client.post(url + "/extract-order", headers=headers)
+    assert response.status_code == 200, response.text
+    proposal = response.json()
+    extracted = proposal["validated_output"]
+    assert extracted["customer_po_number"] == "TEST-42"
+    assert extracted["requested_delivery_date"] == "2027-03-12"
+    assert extracted["lines"][0]["stated_sku"] == product.sku
+    assert proposal["line_matches"][0]["selected_product_id"] == product.id, (
+        proposal["line_matches"][0]["reason"], extracted["lines"][0])
+    review = {"customer": {**extracted["customer"], "code": "ACORN"}, "customer_code": "ACORN",
+              "customer_po_number": "TEST-42-CORRECTED", "requested_delivery_date": (date.today() + timedelta(days=30)).isoformat(),
+              "currency": "SGD", "lines": [{"product_id": product.id, "quantity": 3, "unit_price": "1.20"}]}
+    result = client.post(url + "/confirm", headers=headers, json=review)
+    assert result.status_code == 200, result.text
+    order = client.get(f"/api/orders/{result.json()['id']}", headers=headers).json()
+    assert order["status"] == "ready_for_delivery"
+    assert order["lines"][0]["quantity"] == 3 and order["customer_po_number"] == "TEST-42-CORRECTED"
+    audit = db.scalars(select(AuditEvent).where(AuditEvent.action == "ai_extraction.confirmed")).one()
+    assert audit.detail["order_id"] == order["id"] and audit.entity_id == proposal["id"]
+
+
+@pytest.mark.parametrize(("approval", "family_alias", "accepted"), [
+    ("approved", False, True), ("approved", True, True), ("suggested", False, False),
+])
+def test_only_approved_alias_can_select(client, db, source, mock_llm, new_product,
+                                        approval, family_alias, accepted):
+    from app.modules.products.models import ProductAlias
+
+    product = new_product(unit="case")
+    target = {"family_id": product.family_id} if family_alias else {"product_id": product.id}
+    db.add(ProductAlias(**target, alias_text="Office clips", alias_normalized="office clips", status=approval))
+    db.commit()
+    line = {**EXPECTED["lines"][0], "requested_text": "2.50 Cases of OFFICE clips",
+            "stated_sku": None, "specification": None}
+    mock_llm(("stop", json.dumps({**EXPECTED, "lines": [line]})))
+    url, headers = source
+    match, = client.post(url + "/extract-order", headers=headers).json()["line_matches"]
+    assert match["selected_product_id"] == (product.id if accepted else None)
+    if accepted:
+        assert match["method"] == "alias"
+
+
+@pytest.mark.parametrize("count", [0, 101])
+def test_unconfirmable_proposal_routes_to_manual_handling(client, source, mock_llm, count):
+    url, headers = source
+    output = {**EXPECTED, "lines": EXPECTED["lines"] * count}
+    calls = mock_llm(("stop", json.dumps(output)))
+    reply = client.post(url + "/extract-order", headers=headers).json()
+    assert reply["validated_output"] == output
+    assert reply["status"] == "needs_manual_handling" and reply["line_matches"] is None
+    assert "1 to 100" in reply["error_message"]
+    assert client.get("/api/order-sources/pending-review", headers=headers).json() == []
+    assert client.get("/api/order-sources/failed-extractions", headers=headers).json() == [reply["order_source_id"]]
+    assert client.post(url + "/extract-order", headers=headers).json() == reply and len(calls) == 1

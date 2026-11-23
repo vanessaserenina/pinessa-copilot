@@ -118,3 +118,12 @@ tbody tr:hover { background: #f8fafd; }
 @media (max-width: 420px) {
   .catalogue-fields > :first-child { grid-column: 1 / -1; }
 }
+
+.proposal-review { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: 1rem; align-items: start; }
+.proposal-review pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.proposal-review fieldset { min-width: 0; }
+.proposal-review select { max-width: 100%; }
+
+.dashboard-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 1rem; }
+.dashboard-count { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.dashboard-count dd { font-weight: 700; font-variant-numeric: tabular-nums; }

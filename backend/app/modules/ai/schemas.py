@@ -34,12 +34,36 @@ class StructuredOrder(FixedSchema):
     lines: list[RequestedLine]
 
 
+class MatchCandidate(BaseModel):
+    product_id: int
+    sku: str
+    name: str
+    unit: str
+    attributes: dict
+    method: Literal["sku", "alias", "text"]
+    score: float
+
+
+class LineMatch(BaseModel):
+    line_index: int
+    requested_text: str
+    normalized_text: str
+    normalized_unit: str | None
+    selected_product_id: int | None
+    method: Literal["sku", "alias", "text"] | None
+    status: Literal["auto", "needs_review"]
+    reason: str | None
+    candidates: list[MatchCandidate]
+
+
 class ExtractionOut(BaseModel):
     id: int
     order_source_id: int
     model_name: str
     prompt_version: str
     schema_valid: bool
-    status: Literal["needs_review", "needs_manual_handling"]
+    status: Literal["needs_review", "needs_manual_handling", "confirmed"]
     validated_output: StructuredOrder | None
     error_message: str | None
+    line_matches: list[LineMatch] | None
+    confirmed_order_id: int | None
