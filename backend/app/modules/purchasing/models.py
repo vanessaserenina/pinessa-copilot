@@ -38,3 +38,50 @@ class PurchaseRequisitionItem(Base):
     requisition_id: Mapped[int] = mapped_column(ForeignKey("purchase_requisitions.id"), primary_key=True)
     component_product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), primary_key=True)
     quantity_needed: Mapped[Decimal] = mapped_column(Numeric(23, 4))
+
+
+class Supplier(TimestampMixin, Base):
+    __tablename__ = "suppliers"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    code: Mapped[str] = mapped_column(String(80), unique=True)
+    name: Mapped[str] = mapped_column(String(200))
+    is_synthetic: Mapped[bool] = mapped_column(default=False)
+
+
+class SupplierProduct(Base):
+    __tablename__ = "supplier_products"
+    __table_args__ = (CheckConstraint("unit_cost >= 0", name="cost_valid"),)
+
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), primary_key=True)
+    component_product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), primary_key=True)
+    unit_cost: Mapped[Decimal] = mapped_column(Numeric(14, 0))
+
+
+class PurchaseOrder(TimestampMixin, Base):
+    __tablename__ = "purchase_orders"
+    __table_args__ = (CheckConstraint("status = 'draft'", name="status_valid"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    requisition_id: Mapped[int] = mapped_column(ForeignKey("purchase_requisitions.id"), unique=True)
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"))
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String(25), default="draft")
+    total: Mapped[Decimal] = mapped_column(Numeric())
+    items: Mapped[list["PurchaseOrderItem"]] = relationship(
+        cascade="all, delete-orphan", order_by="PurchaseOrderItem.product_id"
+    )
+
+    @property
+    def po_number(self) -> str:
+        return f"PO-{self.id:06d}"
+
+
+class PurchaseOrderItem(Base):
+    __tablename__ = "purchase_order_items"
+    __table_args__ = (CheckConstraint("quantity > 0 and unit_cost >= 0", name="values_valid"),)
+
+    purchase_order_id: Mapped[int] = mapped_column(ForeignKey("purchase_orders.id"), primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), primary_key=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(23, 4))
+    unit_cost: Mapped[Decimal] = mapped_column(Numeric(14, 0))
