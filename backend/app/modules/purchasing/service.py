@@ -52,8 +52,21 @@ def locked_purchase_order(db: Session, purchase_order_id: int) -> PurchaseOrder:
     return po
 
 
+def current_purchase_order(db: Session, purchase_order_id: int) -> PurchaseOrder:
+    requisition = db.scalar(select(PurchaseRequisition).join(PurchaseOrder).where(
+        PurchaseOrder.id == purchase_order_id,
+    ))
+    if requisition is None:
+        raise HTTPException(404, "Purchase order not found.")
+    # All pre-dispatch transitions and replacements lock the source order first.
+    source = read_order(db, requisition.source_order_id, lock=True)
+    if source.revision != requisition.source_revision:
+        raise HTTPException(409, "The source order was revised. Use its current requisition to replace this PO.")
+    return locked_purchase_order(db, purchase_order_id)
+
+
 def submit_purchase_order(db: Session, purchase_order_id: int, actor_id: int) -> PurchaseOrder:
-    po = locked_purchase_order(db, purchase_order_id)
+    po = current_purchase_order(db, purchase_order_id)
     if po.status != "draft":
         raise HTTPException(409, "Only a draft purchase order can be submitted.")
     po.submitted_by = actor_id
@@ -66,7 +79,7 @@ def submit_purchase_order(db: Session, purchase_order_id: int, actor_id: int) ->
 
 
 def approve_purchase_order(db: Session, purchase_order_id: int, actor_id: int) -> PurchaseOrder:
-    po = locked_purchase_order(db, purchase_order_id)
+    po = current_purchase_order(db, purchase_order_id)
     if po.status != "pending_approval":
         raise HTTPException(409, "Only a purchase order pending approval can be approved.")
     if actor_id in (po.created_by, po.submitted_by):
@@ -81,7 +94,7 @@ def approve_purchase_order(db: Session, purchase_order_id: int, actor_id: int) -
 
 
 def mark_purchase_order_sent(db: Session, purchase_order_id: int, actor_id: int) -> PurchaseOrder:
-    po = locked_purchase_order(db, purchase_order_id)
+    po = current_purchase_order(db, purchase_order_id)
     if po.status != "approved":
         raise HTTPException(409, "Only an approved purchase order can be marked as sent.")
     po.sent_by = actor_id
@@ -138,14 +151,15 @@ def draft_purchase_order(db: Session, requisition_id: int, supplier_id: int, act
         raise HTTPException(404, "Requisition not found.")
     # Serialize conversion with order revisions and competing buyers.
     source = read_order(db, requisition.source_order_id, lock=True)
+    check_revision(source, requisition.source_revision)
     existing = db.scalar(select(PurchaseOrder).join(PurchaseRequisition).where(
-        PurchaseRequisition.source_order_id == source.id,
-    ))
+        PurchaseRequisition.source_order_id == source.id, PurchaseOrder.status != "superseded",
+    ).with_for_update(of=PurchaseOrder).execution_options(populate_existing=True))
     if existing is not None:
         if existing.requisition_id == requisition_id and existing.supplier_id == supplier_id:
             return existing
-        raise HTTPException(409, f"Review existing purchase order {existing.po_number} for this order.")
-    check_revision(source, requisition.source_revision)
+        if existing.requisition_id == requisition_id or existing.sent_by is not None:
+            raise HTTPException(409, f"Review existing purchase order {existing.po_number} for this order.")
     if db.get(Supplier, supplier_id) is None:
         raise HTTPException(404, "Supplier not found.")
 
@@ -170,5 +184,11 @@ def draft_purchase_order(db: Session, requisition_id: int, supplier_id: int, act
     record_audit_event(db, action="purchase_order.created", entity_type="purchase_order",
                        actor_user_id=actor_id, entity_id=draft.id,
                        detail={"requisition_id": requisition_id, "supplier_id": supplier_id, "total_idr": total})
+    if existing is not None:
+        previous_status = existing.status
+        existing.status = "superseded"
+        record_audit_event(db, action="purchase_order.superseded", entity_type="purchase_order",
+                           actor_user_id=actor_id, entity_id=existing.id, before={"status": previous_status},
+                           after={"status": existing.status}, detail={"replacement_po_id": draft.id})
     db.commit()
     return draft

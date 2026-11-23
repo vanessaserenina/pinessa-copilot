@@ -66,13 +66,15 @@ class PurchaseOrder(TimestampMixin, Base):
         CheckConstraint(
             "(status = 'draft' AND submitted_by IS NULL AND approved_by IS NULL) OR "
             "(status = 'pending_approval' AND submitted_by IS NOT NULL AND approved_by IS NULL) OR "
+            "(status = 'superseded' AND (approved_by IS NULL OR (submitted_by IS NOT NULL "
+            "AND approved_by <> submitted_by AND approved_by <> created_by))) OR "
             "(status IN ('approved', 'sent', 'partially_received', 'received') "
             "AND submitted_by IS NOT NULL AND approved_by IS NOT NULL "
             "AND approved_by <> submitted_by AND approved_by <> created_by)", name="status_valid",
         ),
         CheckConstraint(
             "(status IN ('sent', 'partially_received', 'received') AND sent_by IS NOT NULL AND sent_at IS NOT NULL) OR "
-            "(status IN ('draft', 'pending_approval', 'approved') AND sent_by IS NULL AND sent_at IS NULL)",
+            "(status IN ('draft', 'pending_approval', 'approved', 'superseded') AND sent_by IS NULL AND sent_at IS NULL)",
             name="sent_details_valid",
         ),
     )

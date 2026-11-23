@@ -79,7 +79,7 @@ class PurchaseOrderOut(BaseModel):
     approved_by: int | None
     sent_by: int | None
     sent_at: datetime | None
-    status: Literal["draft", "pending_approval", "approved", "sent", "partially_received", "received"]
+    status: Literal["draft", "pending_approval", "approved", "superseded", "sent", "partially_received", "received"]
     currency: Literal["IDR"] = "IDR"
     total: Decimal
     items: list[PurchaseLine]

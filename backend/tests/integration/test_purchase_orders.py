@@ -104,6 +104,71 @@ def approval_draft(client, db, scenario, make_user, headers_for):
     return response.json(), creator_headers
 
 
+def revised_requisition(client, scenario):
+    buyer, sales, _, _, _, order_path, body = scenario
+    body.update(revision=2, reason="Customer doubled quantity")
+    body["lines"][0]["quantity"] = 2
+    revised = client.put(order_path, headers=sales, json=body)
+    assert revised.status_code == 200, revised.text
+    order = revised.json()
+    req = client.put(f"/api/purchasing/orders/{order['id']}/revisions/{order['revision']}/requisition", headers=buyer)
+    assert req.status_code == 200, req.text
+    return f"/api/purchasing/requisitions/{req.json()['id']}/purchase-order"
+
+
+@pytest.mark.parametrize("blocked_action", ["submit", "approve", "mark-sent"])
+def test_replace_revised_po(client, db, approval_draft, scenario, make_user, headers_for, blocked_action):
+    old, _ = approval_draft
+    buyer, _, old_url, part, other, _, _ = scenario
+    approver = headers_for(make_user("approver"))
+    db.commit()
+    old_path = f"/api/purchasing/purchase-orders/{old['id']}"
+    for action, actor in (("submit", buyer), ("approve", approver), ("mark-sent", buyer)):
+        if action == blocked_action:
+            break
+        assert client.post(f"{old_path}/{action}", headers=actor).status_code == 200
+
+    before = client.get(old_path, headers=buyer).json()
+    url = revised_requisition(client, scenario)
+    actor = approver if blocked_action == "approve" else buyer
+    assert client.post(f"{old_path}/{blocked_action}", headers=actor).status_code == 409
+    payload = {"supplier_id": old["supplier_id"]}
+    assert client.put(old_url, headers=buyer, json=payload).status_code == 409
+    assert client.put(url, headers=buyer, json={"supplier_id": 2**62}).status_code == 404
+    assert client.get(old_path, headers=buyer).json() == before
+
+    response = client.put(url, headers=buyer, json=payload)
+    assert response.status_code == 200, response.text
+    replacement = response.json()
+    assert replacement["id"] != old["id"] and replacement["status"] == "draft"
+    assert replacement["submitted_by"] is None and replacement["approved_by"] is None
+    assert {item["product_id"]: Decimal(item["quantity"]) for item in replacement["items"]} == {
+        part.id: 3, other.id: 4}
+    assert client.get(old_path, headers=buyer).json() == dict(before, status="superseded")
+    assert client.put(url, headers=buyer, json=payload).json() == replacement
+    event = db.scalars(select(AuditEvent).where(AuditEvent.action == "purchase_order.superseded")).one()
+    assert event.entity_id == old["id"] and event.detail["replacement_po_id"] == replacement["id"]
+    new_path = f"/api/purchasing/purchase-orders/{replacement['id']}"
+    for action, actor in (("submit", buyer), ("approve", approver), ("mark-sent", buyer)):
+        assert client.post(f"{new_path}/{action}", headers=actor).status_code == 200
+
+
+def test_dispatched_po_survives_revision(client, scenario, sent_po, approval_draft):
+    path, warehouse, _ = sent_po
+    old, _ = approval_draft
+    buyer = scenario[0]
+    url = revised_requisition(client, scenario)
+    delivery = {"items": [{"product_id": scenario[3].id, "quantity": "0.5"}]}
+    for state in ("sent", "partially_received", "received"):
+        assert client.get(path, headers=buyer).json()["status"] == state
+        assert client.put(url, headers=buyer, json={"supplier_id": old["supplier_id"]}).status_code == 409
+        if state != "received":
+            receipt = client.put(f"{path}/receipts/{uuid4()}", headers=warehouse, json=delivery)
+            assert receipt.status_code == 200, receipt.text
+            delivery = {"items": [{"product_id": scenario[3].id, "quantity": 1},
+                                  {"product_id": scenario[4].id, "quantity": 2}]}
+
+
 def test_independent_po_approval(client, db, approval_draft, scenario, make_user, headers_for):
     draft, creator_headers = approval_draft
     buyer, sales = scenario[:2]
