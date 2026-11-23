@@ -11,3 +11,8 @@ argon2-cffi
 pyjwt
 python-multipart
 httpx
+pypdfium2>=5,<6
+Pillow>=10.1
+rapidocr-onnxruntime>=1.4,<2
+openpyxl>=3.1,<4
+defusedxml

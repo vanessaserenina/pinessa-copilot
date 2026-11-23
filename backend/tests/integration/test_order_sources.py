@@ -170,3 +170,92 @@ def test_failed_audit_removes_original_and_allows_retry(db, tmp_path, make_user,
     assert not list(tmp_path.iterdir())
     source = receive_source(db, actor_id, b"%PDF-synthetic", filename="retry.pdf")
     assert (tmp_path / source.storage_key).read_bytes() == b"%PDF-synthetic"
+
+
+def test_extract_pasted_source_once(client, db, make_user, headers_for):
+    headers = headers_for(make_user())
+    text = "  Order sample\r\n12 units. "
+    source = client.post(URL, data={"text": text}, headers=headers).json()
+    endpoint = f"{URL}/{source['id']}/extract-text"
+    assert client.post(endpoint).status_code == 401
+    assert client.post(endpoint, headers=headers_for(make_user("warehouse"))).status_code == 403
+    for _ in range(2):
+        response = client.post(endpoint, headers=headers)
+        assert response.status_code == 200
+        assert response.json()["raw_text"] == text
+        assert response.json()["status"] == "text_extracted"
+    assert db.scalar(select(func.count()).select_from(AuditEvent)
+                     .where(AuditEvent.action == "order_source.text_extracted")) == 1
+
+
+def spreadsheet_order():
+    from openpyxl import Workbook
+
+    book = Workbook()
+    book.active.title = "Order"
+    book.active.append(["SKU", "Qty"])
+    book.active.append(["SYN-001", 0])
+    book.create_sheet("Empty")
+    book.create_sheet("Notes").append(["Gift box"])
+    stream = BytesIO()
+    book.save(stream)
+    return stream.getvalue()
+
+
+@pytest.mark.parametrize(("filename", "contents", "expected"), [
+    ("order.csv", b'\xef\xbb\xbfSKU,Qty\r\n"Box, blue",0\r\n', "SKU\tQty\nBox, blue\t0\n"),
+    ("order.xlsx", spreadsheet_order(), "[Order]\nSKU\tQty\nSYN-001\t0\n[Notes]\nGift box\n"),
+])
+def test_extract_spreadsheet_rows(client, make_user, headers_for, filename, contents, expected):
+    headers = headers_for(make_user())
+    upload = client.post(URL, files={"file": (filename, contents)}, headers=headers)
+    assert upload.status_code == 201
+    endpoint = f"{URL}/{upload.json()['id']}"
+    assert client.post(endpoint + "/extract-text", headers=headers).json()["raw_text"] == expected
+    assert client.get(endpoint, headers=headers).json()["status"] == "text_extracted"
+    assert client.get(endpoint + "/file", headers=headers).content == contents
+
+
+def test_failed_source_queue_and_retry(client, db, make_user, headers_for, tmp_path):
+    headers = headers_for(make_user())
+    data = b"SKU,Qty\nSYN,42\n"
+    source_id = client.post(URL, files={"file": ("order.csv", data)}, headers=headers).json()["id"]
+    endpoint = f"{URL}/{source_id}/extract-text"
+    path = tmp_path / db.get(OrderSource, source_id).storage_key
+    path.unlink()
+    failure = client.post(endpoint, headers=headers).json()
+    assert failure["status"] == "failed_extraction" and failure["raw_text"] is None
+    assert client.get(URL + "/failed-extractions", headers=headers).json() == [source_id]
+    path.write_bytes(data)
+    assert client.post(endpoint, headers=headers).json()["status"] == "text_extracted"
+    assert client.get(URL + "/failed-extractions", headers=headers).json() == []
+
+
+def test_unreadable_pdf_keeps_original_for_review(client, make_user, headers_for):
+    headers = headers_for(make_user())
+    contents = b"%PDF-truncated"
+    source_id = client.post(URL, files={"file": ("order.pdf", contents)}, headers=headers).json()["id"]
+    endpoint = f"{URL}/{source_id}"
+    assert client.post(endpoint + "/extract-text", headers=headers).json()["status"] == "failed_extraction"
+    assert client.get(endpoint + "/file", headers=headers).content == contents
+
+
+@pytest.mark.parametrize("format_name", ["PNG", "JPEG"])
+def test_extract_stored_image_with_ocr(client, make_user, headers_for, format_name):
+    from PIL import Image, ImageDraw, ImageFont
+
+    image = Image.new("RGB", (780, 160), "white")
+    ImageDraw.Draw(image).text((35, 40), "ORDER 12345", fill="black",
+                               font=ImageFont.load_default(size=58))
+    stream = BytesIO()
+    image.save(stream, format=format_name)
+    headers = headers_for(make_user())
+    uploaded = client.post(URL, files={"file": (f"order.{format_name.lower()}", stream.getvalue())},
+                           headers=headers)
+    assert uploaded.status_code == 201
+    endpoint = f"{URL}/{uploaded.json()['id']}"
+    converted = client.post(endpoint + "/extract-text", headers=headers)
+    assert converted.status_code == 200
+    assert converted.json()["status"] == "text_extracted"
+    assert "ORDER12345" in converted.json()["raw_text"].replace(" ", "")
+    assert client.get(endpoint + "/file", headers=headers).content == stream.getvalue()

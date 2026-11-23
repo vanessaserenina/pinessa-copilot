@@ -26,6 +26,12 @@ def file_type(filename: str, data: bytes) -> str:
         kind, signature = signatures[suffix]
         if data.startswith(signature):
             return kind
+    if suffix == ".csv" and b"\x00" not in data:
+        try:
+            data.decode("utf-8-sig")
+            return "csv"
+        except UnicodeDecodeError:
+            pass
     if suffix == ".xlsx":
         try:
             with ZipFile(BytesIO(data)) as archive:
@@ -33,7 +39,7 @@ def file_type(filename: str, data: bytes) -> str:
                     return "xlsx"
         except BadZipFile:
             pass
-    raise HTTPException(415, "Expected a PDF, XLSX, PNG, or JPEG file matching its extension.")
+    raise HTTPException(415, "Expected PDF, XLSX, UTF-8 CSV, PNG, or JPEG content matching its extension.")
 
 
 def receive_source(db: Session, actor_id: int, data: bytes, *, filename: str | None = None,
