@@ -2,8 +2,9 @@ from datetime import datetime
 from pathlib import PureWindowsPath
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -14,7 +15,50 @@ from app.modules.auth.models import User
 from app.modules.orders.intake import receive_source
 from app.modules.orders.models import OrderSource
 
-router = APIRouter(prefix="/order-sources", tags=["order sources"])
+class OrderSourceRoute(APIRoute):
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+        if "POST" not in self.methods:
+            return handler
+
+        async def limited_upload(request: Request):
+            # Limit the entire encoded request, including multipart framing.
+            limit = settings.order_source_upload_limit
+            length = request.headers.get("content-length")
+            if length is not None:
+                try:
+                    declared_size = int(length)
+                except ValueError:
+                    raise HTTPException(400, "Invalid Content-Length.") from None
+                if declared_size < 0:
+                    raise HTTPException(400, "Invalid Content-Length.")
+                if declared_size > limit:
+                    raise HTTPException(413, "Order source request exceeds the size limit.")
+
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > limit:
+                    raise HTTPException(413, "Order source request exceeds the size limit.")
+                body.extend(chunk)
+
+            # Only pass the validated body to FastAPI's form parser.
+            buffered = True
+
+            async def receive():
+                nonlocal buffered
+                if not buffered:
+                    return await request.receive()
+                buffered = False
+                data = bytes(body)
+                body.clear()
+                return {"type": "http.request", "body": data, "more_body": False}
+
+            return await handler(Request(request.scope, receive))
+
+        return limited_upload
+
+
+router = APIRouter(prefix="/order-sources", tags=["order sources"], route_class=OrderSourceRoute)
 Manager = Annotated[User, Depends(require_permission("orders:manage"))]
 Database = Annotated[Session, Depends(get_db)]
 

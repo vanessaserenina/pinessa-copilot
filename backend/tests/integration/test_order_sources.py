@@ -1,15 +1,19 @@
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from io import BytesIO
 from threading import Barrier
 from zipfile import ZipFile
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from starlette.formparsers import MultiPartParser
 
 from app.core.config import settings
+from app.main import app
 from app.modules.audit.models import AuditEvent
 from app.modules.orders.intake import receive_source
 from app.modules.orders.models import OrderSource
@@ -73,14 +77,14 @@ def test_upload_original_and_renamed_duplicate(client, db, tmp_path, make_user, 
 
 def test_invalid_uploads_and_access(client, db, tmp_path, make_user, headers_for, monkeypatch):
     headers = headers_for(make_user())
-    monkeypatch.setattr(settings, "order_source_upload_limit", 12)
+    monkeypatch.setattr(settings, "order_source_upload_limit", 512)
     for payload, status in [
         ({}, 422), ({"data": {"text": "  "}}, 422),
         ({"files": {"file": ("order.pdf", b"")}}, 422),
         ({"files": {"file": ("order.xlsx", b"not Excel")}}, 415),
         ({"files": {"file": ("order.txt", b"test")}}, 415),
-        ({"files": {"file": ("order.pdf", b"x" * 13)}}, 413),
-        ({"data": {"text": "x" * 13}}, 413),
+        ({"files": {"file": ("order.pdf", b"x" * 513)}}, 413),
+        ({"data": {"text": "x" * 513}}, 413),
         ({"data": {"text": "A"}, "files": {"file": ("a.pdf", b"%PDF-")}}, 422),
     ]:
         assert client.post(URL, headers=headers, **payload).status_code == status
@@ -90,6 +94,44 @@ def test_invalid_uploads_and_access(client, db, tmp_path, make_user, headers_for
     assert client.get(f"{URL}/1/file", headers=forbidden).status_code == 403
     assert db.scalar(select(func.count()).select_from(OrderSource)) == 0
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(("declared_length", "chunks_expected"), [
+    ("65", 0), (None, 2), ("32", 2),
+])
+def test_oversized_request_stops_before_multipart_parser(monkeypatch, declared_length, chunks_expected):
+    monkeypatch.setattr(settings, "order_source_upload_limit", 64)
+    monkeypatch.setattr(MultiPartParser, "parse", lambda self: pytest.fail("multipart parser ran"))
+    consumed = []
+
+    async def body():
+        for chunk in (b"a" * 64, b"b", b"remaining"):
+            consumed.append(chunk)
+            yield chunk
+
+    async def submit():
+        headers = {"Content-Type": "multipart/form-data; boundary=order"}
+        if declared_length is not None:
+            headers["Content-Length"] = declared_length
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                     base_url="http://test") as client:
+            return await client.post(URL, headers=headers, content=body())
+
+    assert asyncio.run(submit()).status_code == 413
+    assert len(consumed) == chunks_expected
+
+
+def test_multipart_at_request_limit_is_preserved(client, make_user, headers_for, monkeypatch):
+    headers = headers_for(make_user())
+    data = b"%PDF-synthetic order"
+    upload = httpx.Request("POST", URL, files={"file": ("order.pdf", data)})
+    body = upload.read()
+    monkeypatch.setattr(settings, "order_source_upload_limit", len(body))
+    response = client.post(URL, content=body, headers={
+        **headers, "Content-Type": upload.headers["Content-Type"],
+    })
+    assert response.status_code == 201
+    assert client.get(f"{URL}/{response.json()['id']}/file", headers=headers).content == data
 
 
 def test_simultaneous_identical_files(db, tmp_path, make_user):
