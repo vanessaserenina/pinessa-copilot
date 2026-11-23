@@ -39,6 +39,42 @@ def draft_requisition(db: Session, order_id: int, revision: int, actor_id: int) 
     return draft
 
 
+def locked_purchase_order(db: Session, purchase_order_id: int) -> PurchaseOrder:
+    po = db.scalar(select(PurchaseOrder).where(PurchaseOrder.id == purchase_order_id)
+                   .with_for_update().execution_options(populate_existing=True))
+    if po is None:
+        raise HTTPException(404, "Purchase order not found.")
+    return po
+
+
+def submit_purchase_order(db: Session, purchase_order_id: int, actor_id: int) -> PurchaseOrder:
+    po = locked_purchase_order(db, purchase_order_id)
+    if po.status != "draft":
+        raise HTTPException(409, "Only a draft purchase order can be submitted.")
+    po.submitted_by = actor_id
+    po.status = "pending_approval"
+    record_audit_event(db, action="purchase_order.submitted", entity_type="purchase_order",
+                       actor_user_id=actor_id, entity_id=po.id, before={"status": "draft"},
+                       after={"status": po.status})
+    db.commit()
+    return po
+
+
+def approve_purchase_order(db: Session, purchase_order_id: int, actor_id: int) -> PurchaseOrder:
+    po = locked_purchase_order(db, purchase_order_id)
+    if po.status != "pending_approval":
+        raise HTTPException(409, "Only a purchase order pending approval can be approved.")
+    if actor_id in (po.created_by, po.submitted_by):
+        raise HTTPException(403, "A different user must approve this purchase order.")
+    po.approved_by = actor_id
+    po.status = "approved"
+    record_audit_event(db, action="purchase_order.approved", entity_type="purchase_order",
+                       actor_user_id=actor_id, entity_id=po.id, before={"status": "pending_approval"},
+                       after={"status": po.status})
+    db.commit()
+    return po
+
+
 def draft_purchase_order(db: Session, requisition_id: int, supplier_id: int, actor_id: int) -> PurchaseOrder:
     requisition = db.get(PurchaseRequisition, requisition_id)
     if requisition is None:

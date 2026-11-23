@@ -10,10 +10,14 @@ from app.core.database import get_db
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.models import User
 from app.modules.purchasing.models import PurchaseOrder, PurchaseRequisition, Supplier
-from app.modules.purchasing.service import draft_purchase_order, draft_requisition
+from app.modules.purchasing.service import (
+    approve_purchase_order, draft_purchase_order, draft_requisition, submit_purchase_order,
+)
 
 router = APIRouter(prefix="/purchasing", tags=["purchasing"])
 Buyer = Annotated[User, Depends(require_permission("purchasing:manage"))]
+Approver = Annotated[User, Depends(require_permission("purchasing:approve"))]
+PurchaseReader = Annotated[User, Depends(require_permission("purchasing:read"))]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -66,7 +70,9 @@ class PurchaseOrderOut(BaseModel):
     requisition_id: int
     supplier_id: int
     created_by: int
-    status: Literal["draft"]
+    submitted_by: int | None
+    approved_by: int | None
+    status: Literal["draft", "pending_approval", "approved"]
     currency: Literal["IDR"] = "IDR"
     total: Decimal
     items: list[PurchaseLine]
@@ -83,8 +89,18 @@ def create_purchase_order(requisition_id: int, data: DraftPurchaseOrderInput, db
 
 
 @router.get("/purchase-orders/{purchase_order_id}", response_model=PurchaseOrderOut)
-def get_purchase_order(purchase_order_id: int, db: Database, _: Buyer):
+def get_purchase_order(purchase_order_id: int, db: Database, _: PurchaseReader):
     draft = db.get(PurchaseOrder, purchase_order_id)
     if draft is None:
         raise HTTPException(404, "Purchase order not found.")
     return draft
+
+
+@router.post("/purchase-orders/{purchase_order_id}/submit", response_model=PurchaseOrderOut)
+def submit(purchase_order_id: int, db: Database, actor: Buyer):
+    return submit_purchase_order(db, purchase_order_id, actor.id)
+
+
+@router.post("/purchase-orders/{purchase_order_id}/approve", response_model=PurchaseOrderOut)
+def approve(purchase_order_id: int, db: Database, actor: Approver):
+    return approve_purchase_order(db, purchase_order_id, actor.id)

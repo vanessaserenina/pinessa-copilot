@@ -60,12 +60,21 @@ class SupplierProduct(Base):
 
 class PurchaseOrder(TimestampMixin, Base):
     __tablename__ = "purchase_orders"
-    __table_args__ = (CheckConstraint("status = 'draft'", name="status_valid"),)
+    __table_args__ = (
+        CheckConstraint(
+            "(status = 'draft' AND submitted_by IS NULL AND approved_by IS NULL) OR "
+            "(status = 'pending_approval' AND submitted_by IS NOT NULL AND approved_by IS NULL) OR "
+            "(status = 'approved' AND submitted_by IS NOT NULL AND approved_by IS NOT NULL "
+            "AND approved_by <> submitted_by AND approved_by <> created_by)", name="status_valid",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     requisition_id: Mapped[int] = mapped_column(ForeignKey("purchase_requisitions.id"), unique=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"))
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    submitted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     status: Mapped[str] = mapped_column(String(25), default="draft")
     total: Mapped[Decimal] = mapped_column(Numeric())
     items: Mapped[list["PurchaseOrderItem"]] = relationship(

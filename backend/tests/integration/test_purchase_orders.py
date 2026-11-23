@@ -1,10 +1,15 @@
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+from threading import Barrier
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.modules.audit.models import AuditEvent
 from app.modules.purchasing.models import PurchaseOrder, Supplier, SupplierProduct
+from app.modules.purchasing.service import approve_purchase_order
 from app.scripts.seed_supplier import seed_supplier
 
 
@@ -82,3 +87,76 @@ def test_stale_requisition(client, db, scenario):
     assert edited.status_code == 200, edited.text
     assert client.put(url, headers=buyer, json={"supplier_id": supplier.id}).status_code == 409
     assert db.scalar(select(PurchaseOrder.id)) is None
+
+
+@pytest.fixture()
+def approval_draft(client, db, scenario, make_user, headers_for):
+    creator = make_user("admin")
+    creator_headers = headers_for(creator)
+    seed_supplier(db)
+    db.commit()
+    supplier_id = db.scalars(select(Supplier.id)).one()
+    response = client.put(scenario[2], json={"supplier_id": supplier_id}, headers=creator_headers)
+    assert response.status_code == 200, response.text
+    return response.json(), creator_headers
+
+
+def test_independent_po_approval(client, db, approval_draft, scenario, make_user, headers_for):
+    draft, creator_headers = approval_draft
+    buyer, sales = scenario[:2]
+    submitter = make_user("admin")
+    submitter_headers = headers_for(submitter)
+    approver = make_user("approver")
+    approver_headers = headers_for(approver)
+    db.commit()
+    path = f"/api/purchasing/purchase-orders/{draft['id']}"
+    assert client.get(path, headers=approver_headers).json() == draft
+    assert client.post(path + "/approve", headers=approver_headers).status_code == 409
+    for headers in (sales, approver_headers):
+        assert client.post(path + "/submit", headers=headers).status_code == 403
+    submitted = client.post(path + "/submit", headers=submitter_headers)
+    assert submitted.status_code == 200, submitted.text
+    pending = dict(draft, status="pending_approval", submitted_by=submitter.id)
+    assert submitted.json() == pending
+    assert client.post(path + "/submit", headers=buyer).status_code == 409
+    for headers in (buyer, sales, creator_headers, submitter_headers):
+        assert client.post(path + "/approve", headers=headers).status_code == 403
+    assert client.get(path, headers=buyer).json() == pending
+    response = client.post(path + "/approve", headers=approver_headers)
+    assert response.status_code == 200, response.text
+    approved = dict(pending, status="approved", approved_by=approver.id)
+    assert response.json() == approved
+    assert client.post(path + "/approve", headers=approver_headers).status_code == 409
+    assert client.post(path + "/submit", headers=buyer).status_code == 409
+    assert client.get(path, headers=buyer).json() == approved
+    events = db.execute(select(AuditEvent.action, AuditEvent.actor_user_id).where(
+        AuditEvent.entity_type == "purchase_order", AuditEvent.entity_id == draft["id"],
+    ).order_by(AuditEvent.id)).all()
+    assert events == [("purchase_order.created", draft["created_by"]), ("purchase_order.submitted", submitter.id),
+                      ("purchase_order.approved", approver.id)]
+
+
+def test_competing_approvers(client, db, approval_draft, scenario, make_user):
+    draft, _ = approval_draft
+    path = f"/api/purchasing/purchase-orders/{draft['id']}"
+    assert client.post(path + "/submit", headers=scenario[0]).status_code == 200
+    actors = [make_user("approver").id for _ in range(2)]
+    db.commit()
+    engine = db.get_bind()
+    ready = Barrier(2, timeout=10)
+
+    def approve(actor_id):
+        with Session(engine) as session:
+            ready.wait()
+            try:
+                approve_purchase_order(session, draft["id"], actor_id)
+            except HTTPException as exc:
+                return exc.status_code
+            return 200
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        results = list(workers.map(approve, actors))
+    assert sorted(results) == [200, 409]
+    winner = actors[results.index(200)]
+    assert client.get(path, headers=scenario[0]).json()["approved_by"] == winner
+    assert db.scalars(select(AuditEvent.actor_user_id).where(AuditEvent.action == "purchase_order.approved")).one() == winner
