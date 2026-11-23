@@ -19,12 +19,64 @@ def ocr_engine():
     return RapidOCR(intra_op_num_threads=2, inter_op_num_threads=1)
 
 
+def printed_rows(image):
+    """Read sparse, horizontal printed forms using the whitespace on the page."""
+    import numpy as np
+
+    def runs(mask):
+        edges = np.diff(np.r_[False, mask, False].astype(np.int8))
+        return list(zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)))
+
+    gray = np.asarray(image.convert("L"))
+    ink = gray < 140
+    bands = runs(ink.any(axis=1))
+    if not 1 <= len(bands) <= 40 or np.mean(gray > 230) < 0.85:
+        return None
+
+    rows = []
+    for top, bottom in bands:
+        height = bottom - top
+        if not 12 <= height <= 100:
+            return None
+        columns = ink[top:bottom].any(axis=0)
+        left, right = np.flatnonzero(columns)[[0, -1]]
+        gaps = runs(~columns[left:right + 1])
+        widest = max((end - start for start, end in gaps), default=0)
+        if widest > height or right - left > 80 * height:
+            return None  # Separate columns or a layout requiring the full detector.
+        threshold = max(height * 0.28, widest * 0.72)
+        spaces = [(left + start, left + end) for start, end in gaps if end - start >= threshold]
+        starts = [left, *(end for _, end in spaces)]
+        ends = [*(start for start, _ in spaces), right + 1]
+        if len(starts) > 32:
+            return None
+        # Keep the recognizer's line context and check its characters against
+        # the word crops before using visible gaps as spaces.
+        regions = [(left, right + 1), *zip(starts, ends)]
+        crops = [np.asarray(image.crop((x, top, stop, bottom)).convert("RGB"))
+                 for x, stop in regions]
+        crops = [np.pad(crop, ((3, 3), (3, 3), (0, 0)), constant_values=255) for crop in crops]
+        readings, _ = ocr_engine().text_rec(crops, False)
+        line, *words = readings
+        if any(score < 0.9 or not word.strip() for word, score in readings):
+            return None
+        joined = " ".join(word.strip() for word, _ in words)
+        if joined.replace(" ", "") != line[0].replace(" ", ""):
+            return None
+        rows.append(joined)
+    return "\n".join(rows)
+
+
 def image_text(image):
     from PIL import ImageOps
 
     if image.width * image.height > MAX_PIXELS:
         raise ValueError("Image too large")
-    lines, _ = ocr_engine()(ImageOps.exif_transpose(image).convert("RGB"))
+    image = ImageOps.exif_transpose(image).convert("RGB")
+    printed = printed_rows(image)
+    if printed:
+        return printed
+    lines, _ = ocr_engine()(image)
     if not lines:
         raise ValueError("No readable text")
     return "\n".join(line[1] for line in lines)

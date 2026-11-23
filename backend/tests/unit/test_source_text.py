@@ -3,6 +3,7 @@ from io import BytesIO
 
 import pypdfium2 as pdfium
 from PIL import Image, ImageDraw, ImageFont
+import pytest
 
 from app.modules.orders.source_text_worker import convert_file
 
@@ -12,6 +13,24 @@ def order_image():
     draw = ImageDraw.Draw(image)
     draw.text((35, 40), "ORDER 12345", fill="black", font=ImageFont.load_default(size=58))
     return image
+
+
+@pytest.mark.parametrize("size,positions,lines", [
+    ((1250, 240), [(30, 30), (30, 81)],
+     ["Customer: TEST Larch Hotel. PO TEST-NEW-3.", "6 cases of blue clips, SKU CLIP-B."]),
+    ((950, 600), [(90, 65), (90, 135), (90, 320)],
+     ["Customer: Oak Hotel", "PO ACORN-42", "4 cases of red clips, SKU CLIP-R."]),
+    ((1100, 420), [(60, 30), (150, 135), (150, 235)],
+     ["Order 1248", "3 cases of blue clips", "Blue clips, SKU CLIP-B."]),
+])
+def test_printed_scan_preserves_header_words_and_lines(tmp_path, size, positions, lines):
+    page = Image.new("RGB", size, "white")
+    draw = ImageDraw.Draw(page)
+    for position, line in zip(positions, lines, strict=True):
+        draw.text(position, line, fill="black", font=ImageFont.load_default(size=32))
+    path = tmp_path / "printed.pdf"
+    page.save(path, format="PDF", resolution=144)
+    assert convert_file("pdf", path).splitlines() == lines
 
 
 def text_page():

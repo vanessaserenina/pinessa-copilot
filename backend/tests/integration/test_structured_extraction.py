@@ -92,6 +92,60 @@ def test_structured_proposal_from_stored_text(client, db, source, mock_llm):
     assert audit.entity_id == proposal["id"] and audit.detail["attempts"] == 1
 
 
+@pytest.mark.parametrize(("case_name", "corrected"), [
+    ("text-only", True), ("unknown-sku", True), ("approved-alias", True), ("approved-alias", False)])
+def test_observed_pilot_errors_get_a_source_based_retry(case_name, corrected, client, db, make_user,
+                                                        headers_for, mock_llm, new_product, monkeypatch, tmp_path):
+    from app.modules.products.models import ProductAlias
+
+    case = json.loads((Path(__file__).resolve().parents[3] /
+                       f"data/synthetic/pilot/{case_name}.json").read_text())
+    expected = case["expected"]
+    monkeypatch.setattr(settings, "llm_model", "synthetic-test-model")
+    monkeypatch.setattr(settings, "order_source_storage", tmp_path)
+    headers = headers_for(make_user("sales"))
+    if case["format"] == "csv":
+        payload = {"files": {"file": ("test.csv", case["source"].encode(), "text/csv")}}
+        wording = ("6 cases of red clips." if case_name == "text-only" else "5 cases of blue clips")
+    else:
+        payload = {"data": {"text": case["source"]}}
+        wording = "3 cases of desk fasteners"
+        product = new_product(unit="case")
+        product.sku = "CLIP-B"
+        db.add(ProductAlias(product_id=product.id, alias_text="desk fasteners",
+                            alias_normalized="desk fasteners", status="approved"))
+        db.commit()
+    uploaded = client.post("/api/order-sources", headers=headers, **payload)
+    url = f"/api/order-sources/{uploaded.json()['id']}"
+    assert client.post(url + "/extract-text", headers=headers).status_code == 200
+    line = {**EXPECTED["lines"][0], "requested_text": wording, "quantity": expected["quantity"],
+            "stated_sku": expected["stated_sku"], "specification": None}
+    correct = {**EXPECTED, "customer": {**EXPECTED["customer"], "name": expected["customer"]},
+               "lines": [line]}
+    observed = ({**correct, "customer": {**correct["customer"], "name": "Acorn Hotel"}}
+                if case["format"] == "csv" else {**correct, "lines": [{**line, "stated_sku": "desk fasteners"}]})
+    final = correct if corrected else observed
+    replies = [json.dumps(observed), json.dumps(final)]
+    calls = mock_llm(*[("stop", reply) for reply in replies])
+    result = client.post(url + "/extract-order", headers=headers).json()
+    assert len(calls) == 2
+    schema = calls[1]["response_format"]["json_schema"]["schema"]
+    if case["format"] == "csv":
+        assert schema["properties"]["lines"]["const"] == [line]
+        assert schema["$defs"]["Customer"]["properties"]["name"]["const"] == expected["customer"]
+    else:
+        fields = schema["$defs"]["RequestedLine"]["properties"]
+        assert fields["quantity"]["const"] == expected["quantity"]
+        assert "const" not in fields["stated_sku"]
+    assert db.get(AIExtraction, result["id"]).raw_output == replies
+    assert result["validated_output"] == final
+    assert result["status"] == "needs_review"
+    if case_name == "approved-alias" and corrected:
+        assert result["line_matches"][0]["selected_product_id"] == product.id
+    else:
+        assert result["line_matches"][0]["selected_product_id"] is None
+
+
 @pytest.mark.parametrize("bad", [
     ("stop", "{bad json"),
     ("stop", json.dumps({**EXPECTED, "unexpected": True})),
