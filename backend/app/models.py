@@ -5,3 +5,5 @@ from app.modules.products import models as products_models  # noqa: F401
 from app.modules.inventory import models as inventory_models  # noqa: F401
 from app.modules.orders import models as order_models  # noqa: F401
 from app.modules.purchasing import models as purchasing_models  # noqa: F401
+from app.modules.production import models as production_models  # noqa: F401
+from app.modules.deliveries import models as delivery_models  # noqa: F401
