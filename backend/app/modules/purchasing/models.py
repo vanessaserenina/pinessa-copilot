@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 
 from sqlalchemy import (
     BigInteger, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Identity, Numeric, String, UniqueConstraint,
@@ -65,12 +66,14 @@ class PurchaseOrder(TimestampMixin, Base):
         CheckConstraint(
             "(status = 'draft' AND submitted_by IS NULL AND approved_by IS NULL) OR "
             "(status = 'pending_approval' AND submitted_by IS NOT NULL AND approved_by IS NULL) OR "
-            "(status IN ('approved', 'sent') AND submitted_by IS NOT NULL AND approved_by IS NOT NULL "
+            "(status IN ('approved', 'sent', 'partially_received', 'received') "
+            "AND submitted_by IS NOT NULL AND approved_by IS NOT NULL "
             "AND approved_by <> submitted_by AND approved_by <> created_by)", name="status_valid",
         ),
         CheckConstraint(
-            "(status = 'sent' AND sent_by IS NOT NULL AND sent_at IS NOT NULL) OR "
-            "(status <> 'sent' AND sent_by IS NULL AND sent_at IS NULL)", name="sent_details_valid",
+            "(status IN ('sent', 'partially_received', 'received') AND sent_by IS NOT NULL AND sent_at IS NOT NULL) OR "
+            "(status IN ('draft', 'pending_approval', 'approved') AND sent_by IS NULL AND sent_at IS NULL)",
+            name="sent_details_valid",
         ),
     )
 
@@ -95,9 +98,28 @@ class PurchaseOrder(TimestampMixin, Base):
 
 class PurchaseOrderItem(Base):
     __tablename__ = "purchase_order_items"
-    __table_args__ = (CheckConstraint("quantity > 0 and unit_cost >= 0", name="values_valid"),)
+    __table_args__ = (
+        CheckConstraint("quantity > 0 and unit_cost >= 0", name="values_valid"),
+        CheckConstraint("quantity_received BETWEEN 0 AND quantity", name="received_valid"),
+    )
 
     purchase_order_id: Mapped[int] = mapped_column(ForeignKey("purchase_orders.id"), primary_key=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), primary_key=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(23, 4))
+    quantity_received: Mapped[Decimal] = mapped_column(Numeric(23, 4), server_default="0")
     unit_cost: Mapped[Decimal] = mapped_column(Numeric(14, 0))
+
+
+class GoodsReceiptLine(TimestampMixin, Base):
+    __tablename__ = "goods_receipt_lines"
+    __table_args__ = (
+        ForeignKeyConstraint(["purchase_order_id", "product_id"],
+                             ["purchase_order_items.purchase_order_id", "purchase_order_items.product_id"]),
+        CheckConstraint("quantity > 0", name="quantity_positive"),
+    )
+
+    purchase_order_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    receipt_id: Mapped[UUID] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(23, 4))
+    received_by: Mapped[int] = mapped_column(ForeignKey("users.id"))

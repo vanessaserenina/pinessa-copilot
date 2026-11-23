@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from decimal import Decimal
 from threading import Barrier
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -9,8 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.modules.audit.models import AuditEvent
-from app.modules.purchasing.models import PurchaseOrder, Supplier, SupplierProduct
-from app.modules.purchasing.service import approve_purchase_order
+from app.modules.inventory.models import Inventory
+from app.modules.purchasing.models import GoodsReceiptLine, PurchaseOrder, Supplier, SupplierProduct
+from app.modules.purchasing.service import approve_purchase_order, receive_purchase_order
 from app.scripts.seed_supplier import seed_supplier
 
 
@@ -196,3 +198,83 @@ def test_manually_mark_approved_po_sent(client, db, approval_draft, scenario, ma
     assert event.actor_user_id == buyer_id and event.before == {"status": "approved"}
     assert event.after["status"] == "sent"
     assert datetime.fromisoformat(event.after["sent_at"]) == datetime.fromisoformat(sent["sent_at"])
+
+
+@pytest.fixture()
+def sent_po(client, db, approval_draft, scenario, make_user, headers_for):
+    draft, _ = approval_draft
+    buyer = scenario[0]
+    receiver = make_user("warehouse")
+    warehouse = headers_for(receiver)
+    approver = headers_for(make_user("approver"))
+    db.commit()
+    path = f"/api/purchasing/purchase-orders/{draft['id']}"
+    for action, headers in (("submit", buyer), ("approve", approver), ("mark-sent", buyer)):
+        receipt = {"items": [{"product_id": scenario[3].id, "quantity": 1}]}
+        assert client.put(f"{path}/receipts/{uuid4()}", json=receipt, headers=warehouse).status_code == 409
+        assert client.post(f"{path}/{action}", headers=headers).status_code == 200
+    return path, warehouse, receiver.id
+
+
+def test_partial_and_full_goods_receipts(client, db, sent_po, scenario):
+    path, warehouse, receiver_id = sent_po
+    buyer, _, _, part, other, _, _ = scenario
+    db.add(Inventory(product_id=part.id, available=4))
+    db.commit()
+    url = f"{path}/receipts/{uuid4()}"
+    first = {"items": [{"product_id": part.id, "quantity": "0.25"}]}
+    assert client.put(url, json=first, headers=buyer).status_code == 403
+    for line, status in [({"product_id": other.id, "quantity": 3}, 409),
+                         ({"product_id": other.id, "quantity": "0.5"}, 422),
+                         ({"product_id": other.id, "quantity": 0}, 422),
+                         ({"product_id": 2**62, "quantity": 1}, 422),
+                         (first["items"][0], 422)]:
+        invalid = {"items": [*first["items"], line]}
+        assert client.put(url, json=invalid, headers=warehouse).status_code == status
+    assert db.get(Inventory, part.id).available == 4
+    assert db.scalar(select(GoodsReceiptLine.receipt_id)) is None
+
+    partial = client.put(url, json=first, headers=warehouse)
+    assert partial.status_code == 200, partial.text
+    assert partial.json()["status"] == "partially_received"
+    assert {row["product_id"]: Decimal(row["quantity_received"]) for row in partial.json()["items"]} == {
+        part.id: Decimal("0.25"), other.id: 0}
+    assert client.put(url, json=first, headers=warehouse).json() == partial.json()
+    assert client.put(url, json={"items": [{"product_id": part.id, "quantity": 1}]}, headers=warehouse).status_code == 409
+    assert db.get(Inventory, part.id).available == Decimal("4.25")
+    final_url = f"{path}/receipts/{uuid4()}"
+    delivery = {"items": [{"product_id": other.id, "quantity": 2}, {"product_id": part.id, "quantity": "1.25"}]}
+    full = client.put(final_url, json=delivery, headers=warehouse)
+    assert full.status_code == 200, full.text
+    assert full.json()["status"] == "received"
+    assert all(Decimal(row["quantity_received"]) == Decimal(row["quantity"]) for row in full.json()["items"])
+    assert client.put(final_url, json=delivery, headers=warehouse).json() == full.json()
+    assert client.put(f"{path}/receipts/{uuid4()}", json=first, headers=warehouse).status_code == 409
+    assert db.get(Inventory, part.id).available == Decimal("5.5")
+    assert db.get(Inventory, other.id).available == 2
+    lines = db.scalars(select(GoodsReceiptLine)).all()
+    assert len(lines) == 3 and all(line.received_by == receiver_id for line in lines)
+    events = db.scalars(select(AuditEvent).where(AuditEvent.action == "purchase_order.goods_received")
+                        .order_by(AuditEvent.id)).all()
+    assert [event.after["status"] for event in events] == ["partially_received", "received"]
+
+
+def test_competing_full_deliveries(db, sent_po, approval_draft, scenario):
+    po_id = approval_draft[0]["id"]
+    receiver_id = sent_po[2]
+    quantities = {scenario[3].id: Decimal("1.5"), scenario[4].id: Decimal(2)}
+    db.commit()
+    engine = db.get_bind()
+    ready = Barrier(2, timeout=10)
+
+    def receive(receipt_id):
+        with Session(engine) as session:
+            ready.wait()
+            try:
+                return receive_purchase_order(session, po_id, receipt_id, quantities, receiver_id).status
+            except HTTPException as exc:
+                return str(exc.status_code)
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        assert sorted(workers.map(receive, [uuid4(), uuid4()])) == ["409", "received"]
+    assert {row.product_id: row.available for row in db.scalars(select(Inventory))} == quantities

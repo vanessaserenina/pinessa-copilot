@@ -1,15 +1,19 @@
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP, localcontext
+from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.modules.audit.service import record_audit_event
+from app.modules.inventory.service import add_stock, validate_quantity
 from app.modules.orders.preview import StockPreview
 from app.modules.orders.service import check_revision, read_order
+from app.modules.products.models import Product
 from app.modules.purchasing.models import (
-    PurchaseOrder, PurchaseOrderItem, PurchaseRequisition, PurchaseRequisitionItem, Supplier, SupplierProduct,
+    GoodsReceiptLine, PurchaseOrder, PurchaseOrderItem, PurchaseRequisition, PurchaseRequisitionItem, Supplier,
+    SupplierProduct,
 )
 
 
@@ -86,6 +90,44 @@ def mark_purchase_order_sent(db: Session, purchase_order_id: int, actor_id: int)
     record_audit_event(db, action="purchase_order.sent", entity_type="purchase_order",
                        actor_user_id=actor_id, entity_id=po.id, before={"status": "approved"},
                        after={"status": po.status, "sent_at": po.sent_at})
+    db.commit()
+    return po
+
+
+def receive_purchase_order(db: Session, purchase_order_id: int, receipt_id: UUID,
+                           quantities: dict[int, Decimal], actor_id: int) -> PurchaseOrder:
+    po = locked_purchase_order(db, purchase_order_id)
+    recorded = dict(db.execute(select(GoodsReceiptLine.product_id, GoodsReceiptLine.quantity).where(
+        GoodsReceiptLine.purchase_order_id == po.id, GoodsReceiptLine.receipt_id == receipt_id,
+    )).all())
+    if recorded:
+        if recorded != quantities:
+            raise HTTPException(409, "This receipt ID already records a different delivery.")
+        return po
+    if po.status not in ("sent", "partially_received"):
+        raise HTTPException(409, "Only a sent purchase order with outstanding quantities can receive goods.")
+
+    items = {line.product_id: line for line in po.items}
+    for product_id, quantity in quantities.items():
+        line = items.get(product_id)
+        if line is None:
+            raise HTTPException(422, f"Product {product_id} is not on this purchase order.")
+        validate_quantity(db.get_one(Product, product_id), quantity)
+        if quantity > line.quantity - line.quantity_received:
+            raise HTTPException(409, f"Receipt exceeds the outstanding quantity for product {product_id}.")
+
+    # Lock shared inventory balances in the same order across concurrent receipts.
+    for product_id, quantity in sorted(quantities.items()):
+        add_stock(db, product_id, quantity)
+        items[product_id].quantity_received += quantity
+        db.add(GoodsReceiptLine(purchase_order_id=po.id, receipt_id=receipt_id, product_id=product_id,
+                                quantity=quantity, received_by=actor_id))
+    previous_status = po.status
+    complete = all(line.quantity_received == line.quantity for line in po.items)
+    po.status = "received" if complete else "partially_received"
+    record_audit_event(db, action="purchase_order.goods_received", entity_type="purchase_order",
+                       actor_user_id=actor_id, entity_id=po.id, before={"status": previous_status},
+                       after={"status": po.status}, detail={"receipt_id": str(receipt_id)})
     db.commit()
     return po
 

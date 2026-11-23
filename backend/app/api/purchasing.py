@@ -1,6 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -12,11 +13,13 @@ from app.modules.auth.dependencies import require_permission
 from app.modules.auth.models import User
 from app.modules.purchasing.models import PurchaseOrder, PurchaseRequisition, Supplier
 from app.modules.purchasing.service import (
-    approve_purchase_order, draft_purchase_order, draft_requisition, mark_purchase_order_sent, submit_purchase_order,
+    approve_purchase_order, draft_purchase_order, draft_requisition, mark_purchase_order_sent, receive_purchase_order,
+    submit_purchase_order,
 )
 
 router = APIRouter(prefix="/purchasing", tags=["purchasing"])
 Buyer = Annotated[User, Depends(require_permission("purchasing:manage"))]
+Receiver = Annotated[User, Depends(require_permission("inventory:receive"))]
 Approver = Annotated[User, Depends(require_permission("purchasing:approve"))]
 PurchaseReader = Annotated[User, Depends(require_permission("purchasing:read"))]
 Database = Annotated[Session, Depends(get_db)]
@@ -61,6 +64,7 @@ class PurchaseLine(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     product_id: int
     quantity: Decimal
+    quantity_received: Decimal
     unit_cost: Decimal
 
 
@@ -75,7 +79,7 @@ class PurchaseOrderOut(BaseModel):
     approved_by: int | None
     sent_by: int | None
     sent_at: datetime | None
-    status: Literal["draft", "pending_approval", "approved", "sent"]
+    status: Literal["draft", "pending_approval", "approved", "sent", "partially_received", "received"]
     currency: Literal["IDR"] = "IDR"
     total: Decimal
     items: list[PurchaseLine]
@@ -113,3 +117,23 @@ def approve(purchase_order_id: int, db: Database, actor: Approver):
 def mark_sent(purchase_order_id: int, db: Database, actor: Buyer):
     """Record that the buyer has already contacted the supplier."""
     return mark_purchase_order_sent(db, purchase_order_id, actor.id)
+
+
+class ReceiptLine(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    product_id: int = Field(strict=True, gt=0, le=2**63 - 1)
+    quantity: Decimal = Field(gt=0, max_digits=23, decimal_places=4)
+
+
+class ReceiptInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[ReceiptLine] = Field(min_length=1)
+
+
+@router.put("/purchase-orders/{purchase_order_id}/receipts/{receipt_id}", response_model=PurchaseOrderOut)
+def receive_goods(purchase_order_id: int, receipt_id: UUID, data: ReceiptInput, db: Database, actor: Receiver):
+    """Use a new UUID for each delivery and reuse it when retrying that delivery."""
+    quantities = {line.product_id: line.quantity for line in data.items}
+    if len(quantities) != len(data.items):
+        raise HTTPException(422, "Each product may appear only once in a receipt.")
+    return receive_purchase_order(db, purchase_order_id, receipt_id, quantities, actor.id)
