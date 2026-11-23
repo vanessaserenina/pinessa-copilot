@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/app/core/config.py -> project root is 3 levels above "core"
@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     order_duplicate_days: int = 7
     order_source_storage: Path = ROOT_DIR / "storage" / "order-sources"
     order_source_upload_limit: int = 10 * 1024 * 1024
+    llm_model: str | None = Field(default=None, min_length=1, max_length=200)
+    llm_port: int = Field(default=8080, ge=1, le=65535)
     delivery_storage: Path = ROOT_DIR / "storage" / "deliveries"
     delivery_upload_limit: int = 10 * 1024 * 1024
     dev_seed_password: str | None = None

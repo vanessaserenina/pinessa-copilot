@@ -11,6 +11,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.modules.ai.models import AIExtraction
+from app.modules.ai.schemas import ExtractionOut
+from app.modules.ai.service import extract_order
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.models import User
 from app.modules.orders.extraction import extract_source_text
@@ -96,14 +99,29 @@ def upload_source(actor: Manager, db: Database, text: Annotated[str | None, Form
 @router.get("/failed-extractions")
 def failed_extractions(actor: Manager, db: Database, after_id: Annotated[int, Query(ge=0)] = 0) -> list[int]:
     """Return the next 100 source IDs requiring manual handling."""
+    manual = select(AIExtraction.order_source_id).where(AIExtraction.status == "needs_manual_handling")
     return list(db.scalars(select(OrderSource.id).where(
-        OrderSource.status == "failed_extraction", OrderSource.id > after_id,
+        (OrderSource.status == "failed_extraction") | OrderSource.id.in_(manual),
+        OrderSource.id > after_id,
     ).order_by(OrderSource.id).limit(100)))
 
 
 @router.post("/{source_id}/extract-text")
 def convert_source(source_id: int, actor: Manager, db: Database) -> SourceOut:
     return extract_source_text(db, source_id, actor.id)
+
+
+@router.post("/{source_id}/extract-order")
+def propose_order(source_id: int, actor: Manager, db: Database) -> ExtractionOut:
+    return extract_order(db, source_id, actor.id)
+
+
+@router.get("/{source_id}/extraction")
+def read_extraction(source_id: int, actor: Manager, db: Database) -> ExtractionOut:
+    extraction = db.scalar(select(AIExtraction).where(AIExtraction.order_source_id == source_id))
+    if extraction is None:
+        raise HTTPException(404, "Order extraction not found.")
+    return extraction
 
 
 @router.get("/{source_id}")
