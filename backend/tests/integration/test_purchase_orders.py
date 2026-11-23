@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from decimal import Decimal
 from threading import Barrier
 
@@ -160,3 +161,38 @@ def test_competing_approvers(client, db, approval_draft, scenario, make_user):
     winner = actors[results.index(200)]
     assert client.get(path, headers=scenario[0]).json()["approved_by"] == winner
     assert db.scalars(select(AuditEvent.actor_user_id).where(AuditEvent.action == "purchase_order.approved")).one() == winner
+
+
+def test_manually_mark_approved_po_sent(client, db, approval_draft, scenario, make_user, headers_for):
+    draft, admin_headers = approval_draft
+    buyer, sales = scenario[:2]
+    approver = headers_for(make_user("approver"))
+    db.commit()
+    path = f"/api/purchasing/purchase-orders/{draft['id']}"
+    mark_sent = path + "/mark-sent"
+    assert draft["sent_by"] is None and draft["sent_at"] is None
+    assert client.post(mark_sent, headers=buyer).status_code == 409
+    submitted = client.post(path + "/submit", headers=buyer)
+    assert submitted.status_code == 200
+    assert client.post(mark_sent, headers=admin_headers).status_code == 409
+    approved = client.post(path + "/approve", headers=approver)
+    assert approved.status_code == 200
+    for headers in (sales, approver):
+        assert client.post(mark_sent, headers=headers).status_code == 403
+    assert client.get(path, headers=buyer).json() == approved.json()
+
+    response = client.post(mark_sent, headers=buyer)
+    assert response.status_code == 200, response.text
+    sent = response.json()
+    buyer_id = submitted.json()["submitted_by"]
+    assert sent == dict(approved.json(), status="sent", sent_by=buyer_id, sent_at=sent["sent_at"])
+    assert datetime.fromisoformat(sent["sent_at"]).utcoffset() is not None
+    assert client.post(mark_sent, headers=admin_headers).status_code == 409
+    assert client.get(path, headers=approver).json() == sent
+    event = db.scalars(select(AuditEvent).where(
+        AuditEvent.entity_type == "purchase_order", AuditEvent.entity_id == draft["id"],
+        AuditEvent.action == "purchase_order.sent",
+    )).one()
+    assert event.actor_user_id == buyer_id and event.before == {"status": "approved"}
+    assert event.after["status"] == "sent"
+    assert datetime.fromisoformat(event.after["sent_at"]) == datetime.fromisoformat(sent["sent_at"])

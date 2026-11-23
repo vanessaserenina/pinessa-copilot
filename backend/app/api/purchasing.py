@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
@@ -11,7 +12,7 @@ from app.modules.auth.dependencies import require_permission
 from app.modules.auth.models import User
 from app.modules.purchasing.models import PurchaseOrder, PurchaseRequisition, Supplier
 from app.modules.purchasing.service import (
-    approve_purchase_order, draft_purchase_order, draft_requisition, submit_purchase_order,
+    approve_purchase_order, draft_purchase_order, draft_requisition, mark_purchase_order_sent, submit_purchase_order,
 )
 
 router = APIRouter(prefix="/purchasing", tags=["purchasing"])
@@ -72,7 +73,9 @@ class PurchaseOrderOut(BaseModel):
     created_by: int
     submitted_by: int | None
     approved_by: int | None
-    status: Literal["draft", "pending_approval", "approved"]
+    sent_by: int | None
+    sent_at: datetime | None
+    status: Literal["draft", "pending_approval", "approved", "sent"]
     currency: Literal["IDR"] = "IDR"
     total: Decimal
     items: list[PurchaseLine]
@@ -104,3 +107,9 @@ def submit(purchase_order_id: int, db: Database, actor: Buyer):
 @router.post("/purchase-orders/{purchase_order_id}/approve", response_model=PurchaseOrderOut)
 def approve(purchase_order_id: int, db: Database, actor: Approver):
     return approve_purchase_order(db, purchase_order_id, actor.id)
+
+
+@router.post("/purchase-orders/{purchase_order_id}/mark-sent", response_model=PurchaseOrderOut)
+def mark_sent(purchase_order_id: int, db: Database, actor: Buyer):
+    """Record that the buyer has already contacted the supplier."""
+    return mark_purchase_order_sent(db, purchase_order_id, actor.id)

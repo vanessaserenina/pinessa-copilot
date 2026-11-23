@@ -1,7 +1,8 @@
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    BigInteger, CheckConstraint, ForeignKey, ForeignKeyConstraint, Identity, Numeric, String, UniqueConstraint,
+    BigInteger, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Identity, Numeric, String, UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -64,8 +65,12 @@ class PurchaseOrder(TimestampMixin, Base):
         CheckConstraint(
             "(status = 'draft' AND submitted_by IS NULL AND approved_by IS NULL) OR "
             "(status = 'pending_approval' AND submitted_by IS NOT NULL AND approved_by IS NULL) OR "
-            "(status = 'approved' AND submitted_by IS NOT NULL AND approved_by IS NOT NULL "
+            "(status IN ('approved', 'sent') AND submitted_by IS NOT NULL AND approved_by IS NOT NULL "
             "AND approved_by <> submitted_by AND approved_by <> created_by)", name="status_valid",
+        ),
+        CheckConstraint(
+            "(status = 'sent' AND sent_by IS NOT NULL AND sent_at IS NOT NULL) OR "
+            "(status <> 'sent' AND sent_by IS NULL AND sent_at IS NULL)", name="sent_details_valid",
         ),
     )
 
@@ -75,6 +80,8 @@ class PurchaseOrder(TimestampMixin, Base):
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     submitted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    sent_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(25), default="draft")
     total: Mapped[Decimal] = mapped_column(Numeric())
     items: Mapped[list["PurchaseOrderItem"]] = relationship(

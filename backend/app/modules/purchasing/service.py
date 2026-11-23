@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 
 from fastapi import HTTPException
@@ -71,6 +72,20 @@ def approve_purchase_order(db: Session, purchase_order_id: int, actor_id: int) -
     record_audit_event(db, action="purchase_order.approved", entity_type="purchase_order",
                        actor_user_id=actor_id, entity_id=po.id, before={"status": "pending_approval"},
                        after={"status": po.status})
+    db.commit()
+    return po
+
+
+def mark_purchase_order_sent(db: Session, purchase_order_id: int, actor_id: int) -> PurchaseOrder:
+    po = locked_purchase_order(db, purchase_order_id)
+    if po.status != "approved":
+        raise HTTPException(409, "Only an approved purchase order can be marked as sent.")
+    po.sent_by = actor_id
+    po.sent_at = datetime.now(timezone.utc)
+    po.status = "sent"
+    record_audit_event(db, action="purchase_order.sent", entity_type="purchase_order",
+                       actor_user_id=actor_id, entity_id=po.id, before={"status": "approved"},
+                       after={"status": po.status, "sent_at": po.sent_at})
     db.commit()
     return po
 
