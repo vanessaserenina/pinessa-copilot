@@ -63,6 +63,12 @@ class LineMatch(BaseModel):
     candidates: list[MatchCandidate]
 
 
+class ReviewHeaders(BaseModel):
+    customer_name: str | None
+    po_number: str | None
+    check_po: bool = False
+
+
 class ExtractionOut(BaseModel):
     id: int
     order_source_id: int
@@ -71,6 +77,7 @@ class ExtractionOut(BaseModel):
     schema_valid: bool
     status: Literal["needs_review", "needs_manual_handling", "confirmed"]
     validated_output: StructuredOrder | None
+    review_headers: ReviewHeaders | None = None
     error_message: str | None
     line_matches: list[LineMatch] | None
     confirmed_order_id: int | None

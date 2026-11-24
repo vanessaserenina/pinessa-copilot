@@ -8,27 +8,60 @@ from sqlalchemy.orm import Session
 
 from app.modules.ai.matching import normalize
 from app.modules.ai.quantity import PREFIX, identity, source_quantities
-from app.modules.ai.schemas import StructuredOrder
+from app.modules.ai.schemas import ReviewHeaders, StructuredOrder
 from app.modules.orders.models import OrderSource
 from app.modules.products.models import Product, ProductAlias
 
 
-def csv_customer(text: str) -> str | None:
+def csv_value(text: str, labels: set[str]) -> str | None:
     rows = csv.reader(StringIO(text), delimiter="\t")
     header = [normalize(cell) for cell in next(rows, [])]
-    columns = [i for i, label in enumerate(header) if label in {"customer", "customer name", "customer_name"}]
+    columns = [i for i, label in enumerate(header) if label in labels]
     if len(columns) != 1:
         return None
     index = columns[0]
-    name = None
+    unique_value = None
     for row in rows:
         if len(row) != len(header) or not row[index].strip():
             return None
         value = row[index].strip()
-        if name is not None and name != value:
+        if unique_value is not None and unique_value != value:
             return None
-        name = value
-    return name
+        unique_value = value
+    return unique_value
+
+
+CUSTOMER_COLUMNS = {"customer", "customer name", "customer_name"}
+# Restrict prose overrides to labelled headers. A period inside a name or PO is data.
+CUSTOMER_HEADER = re.compile(r"^[ \t]*Customer:[ \t]*(.+?)(?:\.[ \t]+(?=PO\b)|[ \t]*$)", re.I | re.M)
+PO_HEADER = re.compile(r"(?:^[ \t]*|(?<=\.)[ \t]+)PO(?:[ \t]+number)?(?:[ \t]*[:#][ \t]*|[ \t]+)"
+                       r"([^\r\n]+?)(?:\.(?=\s|$)|$)", re.I | re.M)
+
+
+def review_headers(kind: str, text: str, order: StructuredOrder) -> ReviewHeaders:
+    name = order.customer.name if order.customer else None
+    po = order.customer_po_number
+    if kind == "csv":
+        return ReviewHeaders(customer_name=csv_value(text, CUSTOMER_COLUMNS) or name,
+                             po_number=csv_value(text, {"po", "po number", "po_number"}) or po)
+    if kind not in {"text", "pdf", "image"}:
+        return ReviewHeaders(customer_name=name, po_number=po)
+    text = text.replace("\r\n", "\n")
+    names = {value.strip() for value in CUSTOMER_HEADER.findall(text)}
+    if len(names) == 1:
+        candidate = names.pop()
+        if not re.search(r"\.\s|[,;:]\s*(?:PO|SKU|delivery)\b|[\t;]", candidate, re.I):
+            name = candidate
+    values = {value.strip() for value in PO_HEADER.findall(text)}
+    if len(values) > 1:
+        return ReviewHeaders(customer_name=name, po_number=None, check_po=True)
+    if values:
+        value = values.pop()
+        if re.search(r"\d", value) and re.fullmatch(r"[\w/-]+(?:\.[\w/-]+)*", value):
+            po = value
+        elif kind in {"pdf", "image"} and re.fullmatch(r"[\w./-]*\d[\w./-]*(?:[ \t]+\d+)+", value):
+            return ReviewHeaders(customer_name=name, po_number=None, check_po=True)
+    return ReviewHeaders(customer_name=name, po_number=po)
 
 
 def preserve_fields(properties: dict, values: dict, except_field: str):
@@ -38,7 +71,7 @@ def preserve_fields(properties: dict, values: dict, except_field: str):
 def correction(db: Session, source: OrderSource, order: StructuredOrder) -> tuple[str, dict] | None:
     text = source.raw_text
     if source.source_type == "csv":
-        name = csv_customer(text)
+        name = csv_value(text, CUSTOMER_COLUMNS)
         if name and (order.customer is None or order.customer.name != name):
             hint = "Copy the full customer name exactly from the customer column, including all prefixes."
             schema = StructuredOrder.model_json_schema()

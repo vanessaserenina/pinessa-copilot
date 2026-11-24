@@ -10,6 +10,7 @@ type Candidate = { product_id: number; sku: string; name: string; unit: string; 
 type Match = { source_quantity: { quantity: string; unit: string; normalized_unit: string } | null;
   selected_product_id: number | null; reason: string | null; candidates: Candidate[] };
 type Proposal = { confirmed_order_id: number | null; error_message: string | null; line_matches: Match[] | null;
+  review_headers?: { customer_name: string | null; po_number: string | null; check_po: boolean } | null;
   validated_output: { customer: Record<string, string | null> | null; customer_po_number: string | null;
     requested_delivery_date: string | null; lines: Line[] } | null };
 const customerFields = ["name", "contact_name", "email", "phone", "delivery_address"];
@@ -146,8 +147,11 @@ export function ProposalReview({ api }: { api: Api }) {
       <pre>{source.raw_text}</pre></section>
       {output && proposal?.line_matches && !orderId && <form className="panel" onSubmit={confirm}><h2>Review proposal</h2>
         <fieldset disabled={busy}><label>Customer code<input name="code" required defaultValue={output.customer?.code ?? ""} /></label>
-          {customerFields.map(k => <label key={k}>{k.replaceAll("_", " ")}<input name={k} defaultValue={output.customer?.[k] ?? ""} /></label>)}
-          <label>PO number<input name="po" defaultValue={output.customer_po_number ?? ""} /></label>
+          {customerFields.map(k => <label key={k}>{k.replaceAll("_", " ")}<input name={k}
+            defaultValue={(k === "name" && proposal.review_headers ? proposal.review_headers.customer_name : output.customer?.[k]) ?? ""} /></label>)}
+          {proposal.review_headers?.check_po && <p className="notice">Check the PO number against the original source and enter it before confirmation.</p>}
+          <label>PO number<input name="po" required={proposal.review_headers?.check_po}
+            defaultValue={(proposal.review_headers ? proposal.review_headers.po_number : output.customer_po_number) ?? ""} /></label>
           <label>Delivery date<input type="date" name="date" defaultValue={output.requested_delivery_date ?? ""} /></label>
           <label>Currency<input name="currency" required pattern="[A-Z]{3}" placeholder="SGD" /></label>
           {output.lines.map((line, i) => <ReviewLine key={i} api={api} line={line} match={proposal.line_matches![i]} index={i} />)}

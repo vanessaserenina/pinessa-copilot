@@ -1,0 +1,8 @@
+[
+  {"id":"S01","format":"text","customer":"TEST Maple House","po":"MAPLE-2411","date":"2027-02-19","source":"Customer: TEST Maple House. PO MAPLE-2411. Delivery date 2027-02-19. 4 cases of red clips, SKU CLIP-R.","lines":[{"auto":"CLIP-R","quantity":"4","unit":"cases"}]},
+  {"id":"S02","format":"text","customer":"TEST Cove House","po":"COVE-2411","date":null,"source":"Customer: TEST Cove House. PO COVE-2411.\n2 cases of blue clips, SKU CLIP-B.\nRed clips, SKU CLIP-R.","lines":[{"auto":"CLIP-B","quantity":"2","unit":"cases"},{"auto":"CLIP-R","quantity":null,"unit":null}]},
+  {"id":"S03","format":"pdf","customer":"TEST Elm Hotel","po":"ELM-2411","date":null,"source":"Customer: TEST Elm Hotel. PO ELM-2411.\n5 cases of blue clips, SKU CLIP-B.","lines":[{"auto":"CLIP-B","quantity":"5","unit":"cases"}]},
+  {"id":"S04","format":"csv","customer":"TEST Grove Hotel","po":"GROVE-2411","date":"2027-03-08","source":"customer,po,delivery_date,order_line\nTEST Grove Hotel,GROVE-2411,2027-03-08,\"3 cases of red clips, SKU CLIP-B.\"\n","lines":[{"auto":null,"quantity":"3","unit":"cases","hold":"Clarify the red description versus blue SKU."}]},
+  {"id":"S05","format":"text","customer":"TEST Pine Lodge","po":"PINE-2411","date":null,"source":"Customer: TEST Pine Lodge. PO PINE-2411. 7 cases of blue clips, SKU CLIP-Z.","lines":[{"auto":null,"quantity":"7","unit":"cases","hold":"Obtain a catalogue mapping for CLIP-Z."}]},
+  {"id":"S06","format":"text","customer":"TEST Birch Inn","po":"BIRCH-2411","date":null,"source":"Customer: TEST Birch Inn. PO BIRCH-2411. 2.50 cases of red clips, SKU CLIP-R.","lines":[{"auto":"CLIP-R","quantity":"2.50","unit":"cases","hold":"Resolve the fractional request with the customer before whole-case confirmation."}]}
+]
