@@ -56,7 +56,8 @@ def correction(db: Session, source: OrderSource, order: StructuredOrder) -> tupl
     if not line.stated_sku or not PREFIX.match(line.requested_text):
         return None
     sku = normalize(line.stated_sku)
-    if sku != phrase:
+    unstated_null = sku == "null" and not re.search(r"\bnull\b", text, re.I)
+    if sku != phrase and not unstated_null:
         return None
     if not source_quantities(text, [line])[0]:
         return None
@@ -64,12 +65,20 @@ def correction(db: Session, source: OrderSource, order: StructuredOrder) -> tupl
                                                    ProductAlias.status == "approved").limit(1)):
         return None
     # A literal catalogue SKU can also happen to be an alias.
-    if db.scalar(select(Product.id).where(func.lower(Product.sku) == sku).limit(1)):
+    if not unstated_null and db.scalar(select(Product.id).where(func.lower(Product.sku) == sku).limit(1)):
         return None
     hint = ("The order phrase gives a product description. Copy a stated SKU only when supplied "
-            "separately. Otherwise return null.")
+            "separately. Otherwise return JSON null without quotation marks.")
     schema = StructuredOrder.model_json_schema()
     preserve_fields(schema["properties"], order.model_dump(mode="json"), "lines")
     schema["properties"]["lines"].update(minItems=1, maxItems=1)
-    preserve_fields(schema["$defs"]["RequestedLine"]["properties"], line.model_dump(), "stated_sku")
+    values = line.model_dump()
+    if unstated_null:
+        # The same absent-value spelling can appear in the variant and notes.
+        # Let the retry read those fields from the source; keep genuine details fixed.
+        for field in ("specification", "customization_notes"):
+            if normalize(values[field]) == "null":
+                del values[field]
+        hint += " Use JSON null for absent specification and customization notes as well."
+    preserve_fields(schema["$defs"]["RequestedLine"]["properties"], values, "stated_sku")
     return hint, schema
