@@ -7,7 +7,7 @@ type Source = { id: number; raw_text: string | null; original_filename: string |
 type Line = { requested_text: string; stated_sku: string | null; quantity: string | null; unit: string | null;
   specification: string | null; customization_notes: string | null };
 type Candidate = { product_id: number; sku: string; name: string; unit: string; method: string; attributes?: Record<string, unknown> };
-type Match = { source_quantity: { quantity: string; unit: string; normalized_unit: string } | null;
+type Match = { source_quantity: { quantity: string; unit: string; normalized_unit: string; source_clause: string } | null;
   selected_product_id: number | null; reason: string | null; candidates: Candidate[] };
 type Proposal = { confirmed_order_id: number | null; error_message: string | null; line_matches: Match[] | null;
   review_headers?: { customer_name: string | null; po_number: string | null; check_po: boolean } | null;
@@ -31,7 +31,7 @@ function ReviewLine({ api, line, match, index }: { api: Api; line: Line; match: 
     && /^\d+(?:\.0+)?$/.test(evidence.quantity) && Number(evidence.quantity) >= 1
     && Number(evidence.quantity) <= 10000000 ? evidence.quantity : "";
   return <fieldset><legend>Line {index + 1}</legend>
-    <p>{line.requested_text}</p>
+    <p>{evidence?.source_clause ?? line.requested_text}</p>
     {line.stated_sku && <p>{line.stated_sku}</p>}
     <p>{evidence ? `Requested quantity: ${evidence.quantity} ${evidence.unit}` : "Check the source and enter the quantity agreed with the customer."}</p>
     {match.reason && <p className="notice">{match.reason}</p>}

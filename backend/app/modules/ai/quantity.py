@@ -13,6 +13,7 @@ PREFIX = re.compile(r"^(?P<number>[0-9]+(?:\.[0-9]+)?)\s+(?P<unit>" +
                     "|".join(UNITS) + r")\s+of\s+", re.I)
 SKU_SUFFIX = re.compile(r",?\s+sku\s+([\w-]+)$", re.I)
 PACK_SIZE = re.compile(r"\b(?:pack(?:age)?\s+size|per\s+(?:pack|box|case|carton))\b", re.I)
+PACK_SUFFIX = re.compile(r" pack of [0-9]+$")
 
 
 def identity(text):
@@ -52,7 +53,7 @@ def source_quantities(text: str, lines: list[RequestedLine], source_type: str = 
         clause = re.sub(r"^.*\bPO\s+[\w-]+:\s*", "", clause, flags=re.I)
         name, sku = identity(clause)
         quantity = None if pack_heading or PACK_SIZE.search(clause) else PREFIX.match(clause)
-        clauses[name].append((sku, quantity))
+        clauses[PACK_SUFFIX.sub("", name)].append((name, sku, quantity, clause))
         pack_heading = bool(PACK_SIZE.fullmatch(clause.rstrip(": ")))
 
     result = [None] * len(lines)
@@ -60,15 +61,21 @@ def source_quantities(text: str, lines: list[RequestedLine], source_type: str = 
     for index, line in enumerate(lines):
         name, suffix = identity(line.requested_text)
         sku = suffix or normalize(line.stated_sku)
-        candidates = [(i, match) for i, (code, match) in enumerate(clauses.get(name, []))
-                      if not code or not sku or code == sku]
+        base = PACK_SUFFIX.sub("", name)
+        candidates = []
+        for i, (source_name, code, match, clause) in enumerate(clauses.get(base, [])):
+            exact = source_name == name and (not code or not sku or code == sku)
+            # Only an identical stated SKU can anchor a description shortened by a pack suffix.
+            omitted_pack = name == base and source_name != name and code and code == sku
+            if exact or omitted_pack:
+                candidates.append((i, match, clause))
         if len(candidates) == 1:
-            i, match = candidates[0]
+            i, match, clause = candidates[0]
             if match:
-                claims[(name, i)].append((index, match))
+                claims[(base, i)].append((index, match, clause))
     for users in claims.values():
         if len(users) == 1:
-            index, match = users[0]
+            index, match, clause = users[0]
             result[index] = {"quantity": match["number"], "unit": match["unit"],
-                             "normalized_unit": UNITS[match["unit"].lower()]}
+                             "normalized_unit": UNITS[match["unit"].lower()], "source_clause": clause}
     return result

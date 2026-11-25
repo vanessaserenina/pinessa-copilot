@@ -24,7 +24,23 @@ def test_each_line_keeps_its_own_quantity_and_precision():
     source = "2.50 cases of red clips, SKU CLIP-R.\nBlue clips, SKU CLIP-B7."
     lines = [requested("Blue clips"), requested("Red clips", sku="CLIP-R")]
     assert source_quantities(source, lines) == [
-        None, {"quantity": "2.50", "unit": "cases", "normalized_unit": "case"}]
+        None, {"quantity": "2.50", "unit": "cases", "normalized_unit": "case",
+               "source_clause": "2.50 cases of red clips, SKU CLIP-R"}]
+
+
+@pytest.mark.parametrize("source", [
+    "Blue clips pack of 12, SKU CLIP-B7.",
+    "2 cases of blue clips pack of 12, SKU OTHER.",
+    "2 cases of blue clips pack of 12.",
+    "2 cases of blue clips pack of 12, SKU CLIP-B7.\n8 cases of blue clips pack of 24, SKU CLIP-B7.",
+])
+def test_omitted_pack_requires_unique_sku_and_explicit_order_quantity(source):
+    assert source_quantities(source, [requested("Blue clips")]) == [None]
+
+
+def test_full_and_shortened_lines_cannot_share_the_same_clause():
+    source = "2 cases of blue clips pack of 12, SKU CLIP-B7."
+    assert source_quantities(source, [requested("Blue clips"), requested("Blue clips pack of 12")]) == [None, None]
 
 
 def test_one_source_clause_cannot_supply_two_proposal_lines():

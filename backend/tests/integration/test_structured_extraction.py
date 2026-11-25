@@ -70,6 +70,31 @@ def mock_llm(monkeypatch):
     return setup
 
 
+def test_shortened_pack_description_shows_original_quantity(client, db, new_product, make_user,
+                                                            headers_for, mock_llm, monkeypatch):
+    original = "2 cases of blue clips pack of 12, SKU B12-B"
+    line = {"requested_text": "2 cases of blue clips", "stated_sku": "B12-B", "quantity": "2.0",
+            "unit": "cases", "specification": None, "customization_notes": None}
+    raw = json.dumps({"customer": dict.fromkeys(EXPECTED["customer"]), "customer_po_number": None,
+                      "requested_delivery_date": None, "lines": [line]})
+    monkeypatch.setattr(settings, "llm_model", "synthetic-test-model")
+    mock_llm(("stop", raw))
+    product = new_product(unit="box")
+    product.sku = "B12-B"
+    db.commit()
+    headers = headers_for(make_user("sales"))
+    source = client.post("/api/order-sources", data={"text": original}, headers=headers).json()
+    url = f"/api/order-sources/{source['id']}"
+    assert client.post(url + "/extract-text", headers=headers).status_code == 200
+    proposal = client.post(url + "/extract-order", headers=headers).json()
+    match, = proposal["line_matches"]
+    assert match["selected_product_id"] is None and match["status"] == "needs_review"
+    assert match["source_quantity"] == {"quantity": "2", "unit": "cases", "normalized_unit": "case",
+                                        "source_clause": original}
+    assert proposal["validated_output"]["lines"] == [line]
+    assert db.get(AIExtraction, proposal["id"]).raw_output == [raw]
+
+
 @pytest.mark.parametrize(("kind", "text", "name", "po", "check_po"), [
     ("text", "Customer: TEST Pine Lodge. PO PINE-2411. 7 cases of blue clips.",
      "TEST Pine Lodge", "PINE-2411", False),
