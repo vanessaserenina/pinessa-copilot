@@ -56,3 +56,17 @@ From `backend`, run `python -m app.scripts.pilot_scoring` with the database conn
 The report identifies a frozen source by file type and the SHA-256 of the original submission. For the generated extended-case PDF and workbook, pass the exact submitted files with `--scanned-pdf PATH` and `--xlsx PATH`. Cases absent from the database and sources without a frozen expectation are listed separately. Only matched sources enter the line counts. A matched source with missing review lines still contributes its expected lines, with no credit for those missing decisions.
 
 Each row shows its frozen expectation, raw model line, initial Sales quantity and unit evidence, automatic SKU, and any audited confirmation. An incorrect automatic selection is a selected product on a line expecting a different SKU or a referral. Appropriate referrals are measured out of lines expecting a product referral. Quantity holds are measured separately against lines requiring Sales to resolve the quantity. A pending proposal or a blank quantity box caused solely by an unresolved product does not count as a quantity hold. The report compares source quantity text at its original precision, and compares the unit where the fixture specifies one.
+
+## Similar catalogue variants
+
+Commit `efe7ed3` froze five synthetic SKUs and thirteen line decisions in `data/synthetic/pilot-catalogue.json` before running the matcher from `4c7cfdd`. Six lines should select a SKU and seven should go to Sales. The two blue 12-pack variants have distinct box and case SKUs, so a conflict between the requested selling unit and the stated SKU requires a product referral.
+
+| Measure | Observed |
+|---|---:|
+| Incorrect selections / all automatic selections | 2/7 |
+| Appropriate referrals / lines expected to need referral | 5/7 |
+| Referrals / lines expected to match automatically | 1/6 |
+
+The matcher selected B12-C for boxes and B12-B for cases despite the selling-unit conflicts. It referred S12-C even though sky blue, pack of 12, cases and the SKU all agreed. The colour check found the shorter option “blue” inside “sky blue”. The five appropriate referrals covered conflicting colour, conflicting pack size, unknown SKU, a shared family alias and an ambiguous description.
+
+From `backend`, run `python -m pytest tests/integration/test_catalogue_matching_pilot.py -qs` with PostgreSQL available. The benchmark uses validated request lines and an isolated catalogue. It prints the expected and observed route for each line and the three totals. Test completion means the matcher produced a decision for each line. The reported counts measure routing accuracy.
