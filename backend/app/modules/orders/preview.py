@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.modules.inventory.models import Inventory
-from app.modules.products.bom_calculation import BomError, ProductNotFoundError
+from app.modules.products.bom_calculation import BomError, NoActiveBomError, ProductNotFoundError
 from app.modules.products.bom_service import calculate_product_requirements
 from app.modules.products.models import Product
 from app.modules.products.schemas import CalculationRequest
@@ -55,7 +55,18 @@ def preview_stock(db: Session, order: ManualOrderPreview) -> StockPreview:
         need = stock_need(db, product_id, quantity)
         finished.append(need)
         if need.shortfall:
-            for item in calculate_product_requirements(db, product_id, need.shortfall):
+            try:
+                requirements = calculate_product_requirements(db, product_id, need.shortfall)
+            except NoActiveBomError as exc:
+                unit = product.unit_of_measure
+                if unit.lower() == "case" and quantity != 1:
+                    unit = "cases"
+                raise NoActiveBomError(
+                    f"{quantity.normalize():f} {unit} requested for {product.sku}. "
+                    f"{need.from_stock.normalize():f} available. {need.shortfall.normalize():f} more needed. "
+                    "Retry after Warehouse receives the missing stock."
+                ) from exc
+            for item in requirements:
                 components[item.component_product_id] += item.required
 
     return StockPreview(finished_goods=finished, components=[

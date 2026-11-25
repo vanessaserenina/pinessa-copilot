@@ -522,7 +522,9 @@ def test_competing_orders_retry_after_stock_receipt(client, db, mock_llm, new_pr
     winner, held = sorted(sales, key=lambda po: responses[po].status_code)
     assert responses[winner].status_code == 200, responses[winner].text
     assert responses[held].status_code == 422, responses[held].text
-    assert "Product 'CLIP-B' has no active BOM" in responses[held].json()["detail"]
+    assert responses[held].json()["detail"] == (
+        "8 cases requested for CLIP-B. 2 available. 6 more needed. "
+        "Retry after Warehouse receives the missing stock.")
 
     def verify_state(confirmed, available):
         with Session(engine) as check:

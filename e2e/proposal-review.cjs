@@ -28,7 +28,10 @@ const { chromium } = require(process.env.PINESSA_PLAYWRIGHT);
     await page.getByLabel("Awaiting review").selectOption("1");
     await page.unroute(queuePath);
     const missing = process.env.PINESSA_QUANTITY_SCENARIO === "missing";
-    if (missing) {
+    const shortage = process.env.PINESSA_QUANTITY_SCENARIO === "shortage";
+    if (shortage) {
+      await page.getByLabel("Order message").fill("Customer: TEST Acorn Hotel. PO TEST-STOCK. 8 cases of blue clips, SKU CLIP-B.");
+    } else if (missing) {
       await page.getByLabel("Order message").fill("Customer: TEST Acorn Hotel. PO TEST-PILOT-7. Delivery date 2027-08-18. Blue clips, SKU CLIP-B.");
     } else await page.getByLabel("Order file").setInputFiles({
       name: "TEST-clips.csv", mimeType: "text/csv",
@@ -44,8 +47,8 @@ const { chromium } = require(process.env.PINESSA_PLAYWRIGHT);
     await page.getByLabel("Customer code").fill("TEST-ACORN");
     await page.getByLabel("PO number", { exact: true }).fill("TEST-BROWSER-CORRECTED");
     const quantity = page.getByLabel("Confirmed quantity");
-    if (await quantity.inputValue() !== "") throw new Error("Quantity must start blank");
-    if (!missing) await page.getByText("Requested quantity: 2.50 cases", { exact: true }).waitFor();
+    if (await quantity.inputValue() !== (shortage ? "8" : "")) throw new Error("Unexpected initial confirmed quantity");
+    if (!missing && !shortage) await page.getByText("Requested quantity: 2.50 cases", { exact: true }).waitFor();
     await page.getByLabel("Unit price").fill("1.20");
     const delivery = new Date();
     delivery.setDate(delivery.getDate() + 30);
@@ -53,10 +56,20 @@ const { chromium } = require(process.env.PINESSA_PLAYWRIGHT);
     await page.getByLabel("Currency").fill("SGD");
     const submit = page.getByRole("button", { name: "Confirm order and reserve stock" });
     await submit.click();
-    if (!await quantity.evaluate(input => input.validity.valueMissing && input === document.activeElement)) {
-      throw new Error("Sales must enter the whole-unit quantity");
+    if (shortage) {
+      const message = "8 cases requested for CLIP-B. 2 available. 6 more needed. Retry after Warehouse receives the missing stock.";
+      await page.getByRole("alert").filter({ hasText: message }).waitFor();
+      const productId = await product.inputValue();
+      const receipt = await page.request.post(
+        process.env.PINESSA_TEST_URL + "/api/inventory/" + productId + "/receipts",
+        { headers: { Authorization: "Bearer " + process.env.PINESSA_TEST_WAREHOUSE_TOKEN }, data: { quantity: 6 } });
+      if (receipt.status() !== 200 || Number((await receipt.json()).available) !== 8) throw new Error("Warehouse receipt failed");
+    } else {
+      if (!await quantity.evaluate(input => input.validity.valueMissing && input === document.activeElement)) {
+        throw new Error("Sales must enter the whole-unit quantity");
+      }
+      await quantity.fill("3");
     }
-    await quantity.fill("3");
     await page.getByRole("button", { name: "Confirm order and reserve stock" }).click();
     await page.getByText(/Confirmed order #\d+/).waitFor();
     await page.getByRole("link", { name: "Dashboard", exact: true }).click();
