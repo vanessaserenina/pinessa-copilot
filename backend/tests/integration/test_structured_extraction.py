@@ -135,9 +135,11 @@ def test_structured_proposal_from_stored_text(client, db, source, mock_llm):
     assert audit.entity_id == proposal["id"] and audit.detail["attempts"] == 1
 
 
-@pytest.mark.parametrize(("case_name", "corrected"), [
-    ("text-only", True), ("unknown-sku", True), ("approved-alias", True), ("approved-alias", False)])
-def test_observed_pilot_errors_get_a_source_based_retry(case_name, corrected, client, db, make_user,
+@pytest.mark.parametrize(("case_name", "corrected", "invented_sku"), [
+    ("text-only", True, None), ("unknown-sku", True, None),
+    ("approved-alias", True, "desk fasteners"), ("approved-alias", False, "desk fasteners"),
+    ("approved-alias", True, "null"), ("approved-alias", False, "null")])
+def test_observed_pilot_errors_get_a_source_based_retry(case_name, corrected, invented_sku, client, db, make_user,
                                                         headers_for, mock_llm, new_product, monkeypatch, tmp_path):
     from app.modules.products.models import ProductAlias
 
@@ -166,7 +168,9 @@ def test_observed_pilot_errors_get_a_source_based_retry(case_name, corrected, cl
     correct = {**EXPECTED, "customer": {**EXPECTED["customer"], "name": expected["customer"]},
                "lines": [line]}
     observed = ({**correct, "customer": {**correct["customer"], "name": "Acorn Hotel"}}
-                if case["format"] == "csv" else {**correct, "lines": [{**line, "stated_sku": "desk fasteners"}]})
+                if case["format"] == "csv" else {**correct, "lines": [{**line, "stated_sku": invented_sku}]})
+    if invented_sku == "null":
+        observed["lines"][0].update(specification="null", customization_notes="null")
     final = correct if corrected else observed
     replies = [json.dumps(observed), json.dumps(final)]
     calls = mock_llm(*[("stop", reply) for reply in replies])
@@ -180,6 +184,9 @@ def test_observed_pilot_errors_get_a_source_based_retry(case_name, corrected, cl
         fields = schema["$defs"]["RequestedLine"]["properties"]
         assert fields["quantity"]["const"] == expected["quantity"]
         assert "const" not in fields["stated_sku"]
+        if invented_sku == "null":
+            assert "const" not in fields["specification"]
+            assert "const" not in fields["customization_notes"]
     assert db.get(AIExtraction, result["id"]).raw_output == replies
     assert result["validated_output"] == final
     assert result["status"] == "needs_review"
@@ -187,6 +194,27 @@ def test_observed_pilot_errors_get_a_source_based_retry(case_name, corrected, cl
         assert result["line_matches"][0]["selected_product_id"] == product.id
     else:
         assert result["line_matches"][0]["selected_product_id"] is None
+
+
+@pytest.mark.parametrize("sku", ["null", "CLIP-X"])
+def test_stated_unknown_sku_overrides_approved_alias(sku, client, db, source, mock_llm, new_product):
+    from app.modules.products.models import ProductAlias
+
+    product = new_product(unit="case")
+    db.add(ProductAlias(product_id=product.id, alias_text="desk fasteners",
+                        alias_normalized="desk fasteners", status="approved"))
+    url, headers = source
+    stored = db.get(OrderSource, int(url.rsplit("/", 1)[1]))
+    stored.raw_text = f"3 cases of desk fasteners, SKU {sku}."
+    db.commit()
+    line = {**EXPECTED["lines"][0], "requested_text": "3 cases of desk fasteners",
+            "quantity": "3", "stated_sku": sku, "specification": None}
+    raw = json.dumps({**EXPECTED, "lines": [line]})
+    calls = mock_llm(("stop", raw))
+    proposal = client.post(url + "/extract-order", headers=headers).json()
+    assert len(calls) == 1
+    assert proposal["line_matches"][0]["selected_product_id"] is None
+    assert proposal["validated_output"]["lines"][0]["stated_sku"] == sku
 
 
 @pytest.mark.parametrize("bad", [

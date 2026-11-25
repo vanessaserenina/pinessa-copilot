@@ -97,6 +97,8 @@ def test_pilot_order(case_file, db, client, make_user, headers_for, products):
                            "requested_text": line.get("requested_text")},
               "expected": {key: expected[key] for key in ("customer", "quantity", "stated_sku")},
               "auto": auto_skus, "right_route": right_route,
+              "routing_reasons": [match["reason"] for match in matches],
+              "observed_details": {key: line.get(key) for key in ("specification", "customization_notes", "unit")},
               "wrong_auto": len(auto_skus) - int(expected["auto_sku"] in auto_skus)}
     evidence = matches[0]["source_quantity"] if len(matches) == 1 else None
     result["review_quantity"] = evidence["quantity"] if evidence else None
