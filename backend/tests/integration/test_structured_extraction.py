@@ -375,6 +375,81 @@ def test_review_corrections_confirmation_and_retry(client, db, source, mock_llm,
     assert client.get(url + "/extraction", headers=headers).json()["confirmed_order_id"] == order["id"]
 
 
+def test_simultaneous_conflicting_quantities(client, db, source, mock_llm, new_product,
+                                            make_user, headers_for, monkeypatch):
+    from sqlalchemy import event
+    from app.core.database import get_db
+    from app.main import app
+    from app.modules.inventory.models import Inventory, Reservation
+
+    url, first_headers = source
+    source_id = int(url.rsplit("/", 1)[1])
+    first_id = db.get(OrderSource, source_id).submitted_by
+    second = make_user("sales")
+    second_headers = headers_for(second)
+    product = new_product(unit="case")
+    product.sku = "CLIP-B"
+    db.add(Inventory(product_id=product.id, available=50))
+    db.commit()
+    mock_llm(("stop", json.dumps(EXPECTED)))
+    proposal = client.post(url + "/extract-order", headers=first_headers)
+    assert proposal.status_code == 200
+    proposal_id = proposal.json()["id"]
+    product_id = product.id
+    engine = db.get_bind()
+    ready = Barrier(2, timeout=30)
+
+    def request_session():
+        with Session(engine) as session:
+            yield session
+
+    def meet_at_proposal_lock(conn, cursor, statement, parameters, context, executemany):
+        if "ai_extractions" in statement and "FOR UPDATE" in statement:
+            ready.wait()
+
+    def confirm(user_id, headers, quantity):
+        review = {"customer": EXPECTED["customer"], "customer_code": "ACORN", "currency": "SGD",
+                  "lines": [{"product_id": product_id, "quantity": quantity, "unit_price": "1.20"}]}
+        response = client.post(url + "/confirm", headers=headers, json=review)
+        return response.status_code, user_id, quantity, response.json()
+
+    assert first_id != second.id
+    monkeypatch.setitem(app.dependency_overrides, get_db, request_session)
+    event.listen(engine, "before_cursor_execute", meet_at_proposal_lock)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(confirm, first_id, first_headers, 25)
+            other = pool.submit(confirm, second.id, second_headers, 12)
+            winner, loser = sorted([first.result(), other.result()])
+    finally:
+        event.remove(engine, "before_cursor_execute", meet_at_proposal_lock)
+
+    assert (winner[0], loser[0]) == (200, 409)
+    _, actor_id, quantity, response = winner
+    order_id = response["id"]
+    assert response["status"] == "ready_for_delivery"
+    assert response["lines"][0]["quantity"] == quantity
+    assert loser[3] == {"detail": f"This proposal was already confirmed as order #{order_id}."}
+    with Session(engine) as check:
+        order = check.scalars(select(Order)).one()
+        line, = order.items
+        assert (order.id, line.product_id, line.quantity) == (order_id, product_id, quantity)
+        assert check.get(AIExtraction, proposal_id).confirmed_order_id == order_id
+        reservation = check.scalars(select(Reservation)).one()
+        assert (reservation.order_id, reservation.product_id, reservation.quantity, reservation.user_id) == (
+            order_id, product_id, quantity, actor_id)
+        available = check.get(Inventory, product_id).available
+        assert available == 50 - quantity
+        audit = check.scalars(select(AuditEvent).where(AuditEvent.action == "ai_extraction.confirmed")).one()
+        assert (audit.entity_id, audit.actor_user_id) == (proposal_id, actor_id)
+        assert (audit.detail["source_id"], audit.detail["order_id"]) == (source_id, order_id)
+        reviewed_line, = audit.detail["reviewed"]["lines"]
+        assert (reviewed_line["product_id"], reviewed_line["quantity"]) == (product_id, quantity)
+        print(f"Order {order_id}: user {actor_id} confirmed {quantity} (200), user {loser[1]} "
+              f"submitted {loser[2]} (409). Reservation {reservation.id}, stock 50 -> {available}, "
+              f"confirmation audit {audit.id}.")
+
+
 def test_invented_quantity_requires_sales_entry(client, db, mock_llm, new_product, make_user,
                                                 headers_for, monkeypatch):
     from app.modules.inventory.models import Inventory
