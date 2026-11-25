@@ -57,16 +57,23 @@ def variant_issue(line: RequestedLine, phrase: str, product: Product, alias: str
     requested_details = f" {phrase} {specification} "
     if normalize(line.customization_notes) or re.search(r"\b(custom|customized|personalized)\b", requested_details):
         return "Customization requires review."
+    requested_unit = UNITS.get(normalize(line.unit))
+    selling_unit = UNITS.get(normalize(product.unit_of_measure))
+    if {requested_unit, selling_unit} == {"box", "case"}:
+        return f"Requested unit ({requested_unit}) differs from the catalogue selling unit ({selling_unit})."
     attrs = " ".join(str(value) for value in product.attributes.values())
     supported = set(words(f"{product.name} {attrs} {alias}").split())
     requested = set(requested_details.split())
     # A variant explicitly selected by the catalogue takes precedence over a name or alias.
     for key, choices in product.family.option_groups.items():
         selected = words(str(product.attributes.get(key, "")))
-        for choice in choices:
-            other = words(str(choice))
-            if other != selected and other and f" {other} " in requested_details:
-                return f"Requested {key} differs from the catalogue variant."
+        options = sorted(filter(None, (words(str(choice)) for choice in choices)), key=len, reverse=True)
+        if options:
+            # Match "sky blue" as one option, while still checking a separate mention of "blue".
+            pattern = r"\b(?:" + "|".join(map(re.escape, options)) + r")\b"
+            for detail in (phrase, specification):
+                if any(option != selected for option in re.findall(pattern, detail)):
+                    return f"Requested {key} differs from the catalogue variant."
     # An approved nickname can identify a product but cannot establish a variant.
     descriptors = set(words(f"{product.name} {attrs}").split())
     colours = {"blue", "red", "white", "black", "green", "yellow", "orange",

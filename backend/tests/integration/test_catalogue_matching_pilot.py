@@ -54,3 +54,5 @@ def test_similar_catalogue_routes(migrated_db):
         "appropriate_referrals": counts["appropriate_referrals"], "expected_referrals": counts["expected_referrals"],
         "missed_automatic_matches": missed, "expected_automatic_matches": len(cases) - counts["expected_referrals"],
     }))
+    assert all(row["route_correct"] for row in rows), [
+        case["id"] for case, row in zip(cases, rows, strict=True) if not row["route_correct"]]
