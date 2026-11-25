@@ -1,0 +1,28 @@
+{
+  "family": "Desk clips",
+  "option_groups": {"colour": ["blue", "sky blue", "navy"], "pack": ["pack of 12", "pack of 24"]},
+  "products": [
+    {"sku": "B12-C", "colour": "blue", "pack": "pack of 12", "unit": "case"},
+    {"sku": "B24-C", "colour": "blue", "pack": "pack of 24", "unit": "case"},
+    {"sku": "B12-B", "colour": "blue", "pack": "pack of 12", "unit": "box"},
+    {"sku": "S12-C", "colour": "sky blue", "pack": "pack of 12", "unit": "case"},
+    {"sku": "N12-C", "colour": "navy", "pack": "pack of 12", "unit": "case"}
+  ],
+  "product_aliases": {"midnight fasteners": "N12-C"},
+  "family_alias": "desk fasteners",
+  "lines": [
+    {"id":"blue-12","text":"2 cases of blue clips pack of 12, SKU B12-C","sku":"B12-C","unit":"cases","expected":"B12-C"},
+    {"id":"blue-24","text":"2 cases of blue clips pack of 24, SKU B24-C","sku":"B24-C","unit":"cases","expected":"B24-C"},
+    {"id":"blue-box","text":"2 boxes of blue clips pack of 12, SKU B12-B","sku":"B12-B","unit":"boxes","expected":"B12-B"},
+    {"id":"sky-blue","text":"2 cases of sky blue clips pack of 12, SKU S12-C","sku":"S12-C","unit":"cases","expected":"S12-C"},
+    {"id":"navy","text":"2 cases of navy clips pack of 12, SKU N12-C","sku":"N12-C","unit":"cases","expected":"N12-C"},
+    {"id":"approved-nickname","text":"2 cases of midnight fasteners","sku":null,"unit":"cases","expected":"N12-C"},
+    {"id":"colour-conflict","text":"2 cases of sky blue clips pack of 12, SKU B12-C","sku":"B12-C","unit":"cases","expected":null},
+    {"id":"pack-conflict","text":"2 cases of blue clips pack of 24, SKU B12-C","sku":"B12-C","unit":"cases","expected":null},
+    {"id":"box-request-case-sku","text":"2 boxes of blue clips pack of 12, SKU B12-C","sku":"B12-C","unit":"boxes","expected":null},
+    {"id":"case-request-box-sku","text":"2 cases of blue clips pack of 12, SKU B12-B","sku":"B12-B","unit":"cases","expected":null},
+    {"id":"unknown-sku","text":"2 cases of blue clips pack of 12, SKU B12-X","sku":"B12-X","unit":"cases","expected":null},
+    {"id":"shared-nickname","text":"2 cases of desk fasteners","sku":null,"unit":"cases","expected":null},
+    {"id":"ambiguous-description","text":"2 cases of blue clips","sku":null,"unit":"cases","expected":null}
+  ]
+}
