@@ -52,4 +52,6 @@ def test_missing_bom_only_matters_when_stock_is_short(
     line["quantity"] = 2
     missing = client.post(path, json={"lines": [line]}, headers=headers)
     assert missing.status_code == 422
-    assert "no active BOM" in missing.json()["detail"]
+    assert missing.json()["detail"] == (
+        f"2 {product.unit_of_measure} requested for {product.sku}. 1 available. 1 more needed. "
+        "Retry after Warehouse receives the missing stock.")

@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.modules.auth.security import create_access_token
 from app.main import app
 from app.modules.inventory.models import Inventory
 from app.modules.orders.models import Order
@@ -22,7 +23,7 @@ from sqlalchemy.orm import Session
 
 
 @pytest.mark.skipif(not os.environ.get("PINESSA_PLAYWRIGHT"), reason="Optional live browser gate")
-@pytest.mark.parametrize("scenario", ["fractional", "missing"])
+@pytest.mark.parametrize("scenario", ["fractional", "missing", "shortage"])
 def test_sales_browser_confirmation(migrated_db, new_product, make_user, tmp_path, monkeypatch, scenario):
     monkeypatch.setattr(settings, "order_source_storage", tmp_path)
     db = migrated_db
@@ -30,12 +31,17 @@ def test_sales_browser_confirmation(migrated_db, new_product, make_user, tmp_pat
     product.sku = "CLIP-B"
     product.name = "Blue clips"
     product.attributes = {"colour": "blue"}
-    db.add(Inventory(product_id=product.id, available=10))
+    shortage = scenario == "shortage"
+    db.add(Inventory(product_id=product.id, available=2 if shortage else 10))
     password = secrets.token_urlsafe()
     user = make_user("sales", password=password)
     db.commit()
     env = {**os.environ, "PINESSA_TEST_EMAIL": user.email, "PINESSA_TEST_PASSWORD": password,
            "PINESSA_QUANTITY_SCENARIO": scenario}
+    if shortage:
+        warehouse = make_user("warehouse")
+        db.commit()
+        env["PINESSA_TEST_WAREHOUSE_TOKEN"] = create_access_token(warehouse.id)
     root = Path(__file__).resolve().parents[3]
     server_app = FastAPI()
     server_app.include_router(app.router)
@@ -57,11 +63,12 @@ def test_sales_browser_confirmation(migrated_db, new_product, make_user, tmp_pat
             db.expire_all()
             order = db.scalars(select(Order)).one()
             assert order.customer_po_number == "TEST-BROWSER-CORRECTED"
-            assert order.status == "ready_for_delivery" and order.items[0].quantity == 3
+            expected_quantity = 8 if shortage else 3
+            assert order.status == "ready_for_delivery" and order.items[0].quantity == expected_quantity
             audit = db.scalars(select(AuditEvent).where(AuditEvent.action == "ai_extraction.confirmed")).one()
             assert audit.detail["order_id"] == order.id
-            assert audit.detail["reviewed"]["lines"][0]["quantity"] == 3
-            assert db.get(Inventory, product.id).available == 7
+            assert audit.detail["reviewed"]["lines"][0]["quantity"] == expected_quantity
+            assert db.get(Inventory, product.id).available == (0 if shortage else 7)
         finally:
             server.should_exit = True
             thread.join(8)
