@@ -14,6 +14,7 @@ from app.modules.ai import provider
 from app.modules.ai.models import AIExtraction
 from app.modules.ai.schemas import StructuredOrder
 from app.modules.ai.service import extract_order
+from app.modules.ai.source_checks import review_headers
 from app.modules.audit.models import AuditEvent
 from app.modules.orders.models import Order, OrderSource
 
@@ -67,6 +68,48 @@ def mock_llm(monkeypatch):
         return calls
 
     return setup
+
+
+@pytest.mark.parametrize(("kind", "text", "name", "po", "check_po"), [
+    ("text", "Customer: TEST Pine Lodge. PO PINE-2411. 7 cases of blue clips.",
+     "TEST Pine Lodge", "PINE-2411", False),
+    ("csv", "customer\tpo\torder_line\nTEST Maple House\t001-41\tRed clips",
+     "TEST Maple House", "001-41", False),
+    ("pdf", "Customer: TEST Elm Hotel. PO ELM-241 1.\n5 cases of blue clips.",
+     "TEST Elm Hotel", None, True),
+])
+def test_review_headers_preserve_reply(client, db, source, mock_llm, kind, text, name, po, check_po):
+    url, headers = source
+    stored = db.get(OrderSource, int(url.rsplit("/", 1)[1]))
+    stored.source_type, stored.raw_text = kind, text
+    db.commit()
+    wrong = {**EXPECTED, "customer": {**EXPECTED["customer"], "name": "Maple House" if kind == "csv" else "TEST"},
+             "customer_po_number": "ELM-241" if kind == "pdf" else "PO PINE-2411"}
+    raw = json.dumps(wrong)
+    mock_llm(("stop", raw), ("stop", raw))
+    for response in (client.post(url + "/extract-order", headers=headers),
+                     client.get(url + "/extraction", headers=headers)):
+        proposal = response.json()
+        assert proposal["review_headers"] == {"customer_name": name, "po_number": po,
+                                               "check_po": check_po}
+        assert proposal["validated_output"] == wrong
+        assert db.get(AIExtraction, proposal["id"]).raw_output[0] == raw
+    if check_po:
+        review = {"customer": EXPECTED["customer"], "customer_code": "ELM", "currency": "SGD",
+                  "lines": [{"product_id": 1, "quantity": 5, "unit_price": "1"}]}
+        blocked = client.post(url + "/confirm", headers=headers, json=review)
+        assert blocked.status_code == 422 and "original source" in blocked.json()["detail"]
+
+
+@pytest.mark.parametrize(("kind", "text", "name", "po", "check"), [
+    ("text", "Customer: Acorn, PO pending.\nPO will follow.", "Acorn", "TEST-42", False),
+    ("text", "Customer: Acorn & Co.\r\nPO: AB.001/4", "Acorn & Co.", "AB.001/4", False),
+    ("image", "PO: TEST-42\nPO: TEST-43", "Acorn", None, True),
+    ("csv", "customer\tpo\nAcorn\tAA\nBirch\tBB", "Acorn", "TEST-42", False),
+])
+def test_header_evidence_boundaries(kind, text, name, po, check):
+    headers = review_headers(kind, text, StructuredOrder.model_validate(EXPECTED))
+    assert (headers.customer_name, headers.po_number, headers.check_po) == (name, po, check)
 
 
 def test_structured_proposal_from_stored_text(client, db, source, mock_llm):

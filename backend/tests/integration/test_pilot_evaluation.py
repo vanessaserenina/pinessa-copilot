@@ -102,6 +102,9 @@ def test_pilot_order(case_file, db, client, make_user, headers_for, products):
     result["review_quantity"] = evidence["quantity"] if evidence else None
     result["review_quantity_correct"] = len(matches) == 1 and same_quantity(result["review_quantity"], expected["quantity"])
     result["confirmed"] = None
+    review = proposal.get("review_headers") or {}
+    result["review_customer_correct"] = review.get("customer_name") == expected["customer"]
+    result["review_po_correct"] = review.get("po_number") == expected["po"]
     if expected["confirmed_sku"] is None:
         print("PILOT_RESULT " + json.dumps(result), flush=True)
         return
@@ -126,6 +129,46 @@ def test_pilot_order(case_file, db, client, make_user, headers_for, products):
 
 
 EXTENDED = json.loads((CASES[0].parent.parent / "pilot-extended.json").read_text())
+SHADOW_DIR = CASES[0].parent.parent / "pilot-shadow"
+SHADOW = json.loads((SHADOW_DIR / "batch.json").read_text())
+
+
+@pytest.mark.parametrize("case", SHADOW, ids=lambda case: case["id"])
+def test_shadow_headers(case, db, client, make_user, headers_for, products):
+    headers = headers_for(make_user("sales"))
+    if case["format"] == "pdf":
+        payload = {"files": {"file": ("S03.pdf", (SHADOW_DIR / "S03.pdf").read_bytes())}}
+    elif case["format"] == "csv":
+        payload = {"files": {"file": ("S04.csv", case["source"].encode())}}
+    else:
+        payload = {"data": {"text": case["source"]}}
+    response = client.post("/api/order-sources", headers=headers, **payload)
+    assert response.status_code == 201
+    url = f"/api/order-sources/{response.json()['id']}"
+    source = client.post(url + "/extract-text", headers=headers).json()
+    proposal = client.post(url + "/extract-order", headers=headers).json()
+    review = proposal["review_headers"]
+    row = db.get(AIExtraction, proposal["id"])
+    raw = json.loads(row.raw_output[-1])
+    skus = {product.id: sku for sku, product in products.items()}
+    matches = proposal["line_matches"]
+    print("SHADOW_RESULT " + json.dumps({
+        "id": case["id"], "customer": raw["customer"]["name"], "po": raw["customer_po_number"],
+        "review": review, "text": source["raw_text"],
+        "raw_quantity": [line["quantity"] for line in raw["lines"]],
+        "quantities": [m["source_quantity"] for m in matches],
+        "selected": [skus.get(m["selected_product_id"]) for m in matches],
+    }), flush=True)
+    assert review["customer_name"] == case["customer"]
+    if case["format"] == "pdf" and review["check_po"]:
+        assert review["po_number"] is None
+    else:
+        assert review["po_number"] == case["po"]
+    assert [skus.get(m["selected_product_id"]) for m in matches] == [line["auto"] for line in case["lines"]]
+    for match, line in zip(matches, case["lines"], strict=True):
+        evidence = match["source_quantity"] or {}
+        assert (evidence.get("quantity"), evidence.get("unit")) == (line["quantity"], line["unit"])
+    assert db.scalar(select(func.count()).select_from(Order)) == 0
 
 
 def upload_payload(case):

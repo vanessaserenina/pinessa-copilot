@@ -13,7 +13,8 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.modules.ai.models import AIExtraction
 from app.modules.ai.quantity import source_quantities
-from app.modules.ai.schemas import Customer, ExtractionOut, SourceQuantity
+from app.modules.ai.source_checks import review_headers
+from app.modules.ai.schemas import Customer, ExtractionOut, SourceQuantity, StructuredOrder
 from app.modules.audit.models import AuditEvent
 from app.modules.audit.service import record_audit_event
 from app.modules.orders.schemas import OrderInput, OrderOut, PricedLine
@@ -127,6 +128,7 @@ def review_output(db: Session, extraction: AIExtraction) -> ExtractionOut:
     output = ExtractionOut.model_validate(extraction, from_attributes=True)
     if output.validated_output and output.line_matches:
         source = db.get(OrderSource, extraction.order_source_id)
+        output.review_headers = review_headers(source.source_type, source.raw_text or "", output.validated_output)
         evidence = source_quantities(source.raw_text or "", output.validated_output.lines, source.source_type)
         for match, quantity in zip(output.line_matches, evidence, strict=True):
             match.source_quantity = SourceQuantity(**quantity) if quantity else None
@@ -188,6 +190,12 @@ def confirm_proposal(source_id: int, data: ReviewInput, actor: Manager, db: Data
         return snapshot(read_order(db, extraction.confirmed_order_id))
     if len(data.lines) != len(extraction.line_matches):
         raise HTTPException(422, "Review every proposed line before confirming.")
+    if not data.customer_po_number:
+        source = db.get(OrderSource, source_id)
+        headers = review_headers(source.source_type, source.raw_text or "",
+                                 StructuredOrder.model_validate(extraction.validated_output))
+        if headers.check_po:
+            raise HTTPException(422, "Check the PO number against the original source before confirming.")
     order_data = OrderInput.model_validate(data.model_dump(
         exclude={"customer": True, "lines": {"__all__": {"specification", "customization_notes"}}}))
     try:
