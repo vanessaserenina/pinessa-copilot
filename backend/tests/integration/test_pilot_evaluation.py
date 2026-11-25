@@ -14,8 +14,9 @@ from app.modules.ai.models import AIExtraction
 from app.modules.ai.schemas import StructuredOrder
 from app.modules.audit.models import AuditEvent
 from app.modules.inventory.models import Inventory
-from app.modules.orders.models import Order
+from app.modules.orders.models import Order, OrderSource
 from app.modules.products.models import ProductAlias
+from app.scripts.pilot_scoring import build_report
 
 CASES = sorted((Path(__file__).resolve().parents[3] / "data/synthetic/pilot").glob("*.json"))
 pytestmark = pytest.mark.skipif(os.getenv("PINESSA_PILOT") != "1", reason="Opt-in measured local-model benchmark")
@@ -30,6 +31,25 @@ def same_quantity(actual, expected):
     if actual is None or expected is None:
         return actual == expected
     return Decimal(actual) == Decimal(expected)
+
+
+@pytest.fixture(autouse=True)
+def report_case_score(request, db, products):
+    yield
+    params = request.node.callspec.params
+    generated = {}
+    if "case_file" in params:
+        group, name = "original", params["case_file"].stem
+    else:
+        case = params["case"]
+        group, name = ("shadow", case["id"]) if "id" in case else ("extended", case["case"])
+        if group == "extended" and case["format"] in {"pdf", "xlsx"}:
+            source = db.scalar(select(OrderSource))
+            if source:
+                generated[name] = settings.order_source_storage / source.storage_key
+    section = build_report(db, generated_files=generated)["groups"][group]
+    assert [row["case"] for row in section["sources"]] == [name]
+    print("PILOT_SCORE " + json.dumps({"group": group, "case": name, **section["counts"]}), flush=True)
 
 
 @pytest.fixture()
