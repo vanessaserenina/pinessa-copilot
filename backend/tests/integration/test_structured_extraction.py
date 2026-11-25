@@ -450,6 +450,125 @@ def test_simultaneous_conflicting_quantities(client, db, source, mock_llm, new_p
               f"confirmation audit {audit.id}.")
 
 
+def test_competing_orders_retry_after_stock_receipt(client, db, mock_llm, new_product,
+                                                   make_user, headers_for, monkeypatch):
+    from decimal import Decimal
+    from sqlalchemy import event
+    from app.core.database import get_db
+    from app.main import app
+    from app.modules.inventory.models import Inventory, Reservation
+
+    monkeypatch.setattr(settings, "llm_model", "synthetic-test-model")
+    product = new_product(unit="case")
+    product.sku = "CLIP-B"
+    product_id = product.id
+    warehouse = headers_for(make_user("warehouse"))
+    receipt_url = f"/api/inventory/{product_id}/receipts"
+    receipt = client.post(receipt_url, headers=warehouse, json={"quantity": 10})
+    assert receipt.status_code == 200 and Decimal(receipt.json()["available"]) == 10
+
+    sales = {}
+    for code in ("ACORN", "BIRCH"):
+        user = make_user("sales")
+        headers = headers_for(user)
+        po = f"{code}-100"
+        line = "8 cases of blue clips, SKU CLIP-B"
+        customer = {**EXPECTED["customer"], "name": code}
+        extracted = {**EXPECTED, "customer": customer, "customer_po_number": po,
+                     "requested_delivery_date": None, "lines": [
+                         {**EXPECTED["lines"][0], "requested_text": line, "quantity": "8"}]}
+        mock_llm(("stop", json.dumps(extracted)))
+        source = client.post("/api/order-sources", headers=headers,
+                             data={"text": f"Customer: {code}\nPO: {po}\n{line}"})
+        assert source.status_code == 201
+        source_id = source.json()["id"]
+        url = f"/api/order-sources/{source_id}"
+        assert client.post(url + "/extract-text", headers=headers).status_code == 200
+        proposal = client.post(url + "/extract-order", headers=headers)
+        assert proposal.status_code == 200
+        review = {"customer": customer, "customer_code": code, "customer_po_number": po,
+                  "currency": "SGD", "lines": [{"product_id": product_id, "quantity": 8,
+                                                "unit_price": "1.20"}]}
+        sales[po] = (user.id, source_id, proposal.json()["id"], headers, review)
+
+    engine = db.get_bind()
+
+    def request_session():
+        with Session(engine) as session:
+            yield session
+
+    monkeypatch.setitem(app.dependency_overrides, get_db, request_session)
+    ready = Barrier(2, timeout=30)
+    stock_lock_sessions = []
+
+    def meet_at_stock_lock(conn, cursor, statement, parameters, context, executemany):
+        if "FROM inventory" in statement and "FOR UPDATE" in statement:
+            stock_lock_sessions.append(conn)
+            ready.wait()
+
+    def confirm(po):
+        _, source_id, _, headers, review = sales[po]
+        return client.post(f"/api/order-sources/{source_id}/confirm", headers=headers, json=review)
+
+    event.listen(engine, "before_cursor_execute", meet_at_stock_lock)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = {po: pool.submit(confirm, po) for po in sales}
+            responses = {po: future.result() for po, future in futures.items()}
+    finally:
+        event.remove(engine, "before_cursor_execute", meet_at_stock_lock)
+
+    assert len(set(stock_lock_sessions)) == 2
+    winner, held = sorted(sales, key=lambda po: responses[po].status_code)
+    assert responses[winner].status_code == 200, responses[winner].text
+    assert responses[held].status_code == 422, responses[held].text
+    assert "Product 'CLIP-B' has no active BOM" in responses[held].json()["detail"]
+
+    def verify_state(confirmed, available):
+        with Session(engine) as check:
+            assert check.get(Inventory, product_id).available == available
+            orders = check.scalars(select(Order)).all()
+            assert len(orders) == len(confirmed)
+            reservations = check.scalars(select(Reservation)).all()
+            audits = check.scalars(select(AuditEvent).where(
+                AuditEvent.action == "ai_extraction.confirmed")).all()
+            assert len(reservations) == len(audits) == len(confirmed)
+            for po, response in confirmed.items():
+                actor, source_id, proposal_id, _, _ = sales[po]
+                body = response.json()
+                order_id = body["id"]
+                order, = [row for row in orders if row.id == order_id]
+                assert body["status"] == order.status == "ready_for_delivery"
+                assert body["customer_po_number"] == order.customer_po_number == po
+                item, = order.items
+                response_item, = body["lines"]
+                assert item.product_id == response_item["product_id"] == product_id
+                assert item.quantity == response_item["quantity"] == 8
+                proposal = check.get(AIExtraction, proposal_id)
+                assert (proposal.status, proposal.confirmed_order_id) == ("confirmed", order_id)
+                reservation, = [r for r in reservations if r.order_id == order_id]
+                assert (reservation.product_id, reservation.quantity, reservation.user_id) == (product_id, 8, actor)
+                audit, = [a for a in audits if a.entity_id == proposal_id]
+                assert (audit.actor_user_id, audit.detail["source_id"], audit.detail["order_id"]) == (
+                    actor, source_id, order_id)
+                reviewed, = audit.detail["reviewed"]["lines"]
+                assert (reviewed["product_id"], reviewed["quantity"]) == (product_id, 8)
+            for po in sales.keys() - confirmed.keys():
+                proposal = check.get(AIExtraction, sales[po][2])
+                assert (proposal.status, proposal.confirmed_order_id) == ("needs_review", None)
+
+    confirmed = {winner: responses[winner]}
+    verify_state(confirmed, 2)
+    receipt = client.post(receipt_url, headers=warehouse, json={"quantity": 6})
+    assert receipt.status_code == 200 and Decimal(receipt.json()["available"]) == 8
+    retry = confirm(held)
+    assert retry.status_code == 200, retry.text
+    confirmed[held] = retry
+    verify_state(confirmed, 0)
+    print(f"{winner}: 200 order {responses[winner].json()['id']}; {held}: 422, "
+          f"then 200 order {retry.json()['id']}. Stock 10 -> 2 -> 8 -> 0.")
+
+
 def test_invented_quantity_requires_sales_entry(client, db, mock_llm, new_product, make_user,
                                                 headers_for, monkeypatch):
     from app.modules.inventory.models import Inventory
