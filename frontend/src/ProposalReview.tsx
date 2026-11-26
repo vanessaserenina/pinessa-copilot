@@ -15,7 +15,17 @@ type Proposal = { confirmed_order_id: number | null; error_message: string | nul
     requested_delivery_date: string | null; lines: Line[] } | null };
 const customerFields = ["name", "contact_name", "email", "phone", "delivery_address"];
 
-function ReviewLine({ api, line, match, index }: { api: Api; line: Line; match: Match; index: number }) {
+function PriceField({ api, path, index }: { api: Api; path: string | null; index: number }) {
+  const approved = useQuery<string | null>(api, path);
+  const [entered, setEntered] = useState<string>();
+  return <><label>Unit price<input name={`price-${index}`} type="number" required min="0" step="0.0001"
+    value={entered ?? approved.data ?? ""} onChange={e => setEntered(e.target.value)} /></label>
+    {approved.error && <p role="alert">Could not load the approved price.</p>}</>;
+}
+
+function ReviewLine({ api, line, match, index, customerCode, currency }: {
+  api: Api; line: Line; match: Match; index: number; customerCode: string; currency: string
+}) {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(match.candidates.find(c => c.product_id === match.selected_product_id));
   const found = useQuery<ProductPage>(api, search.trim()
@@ -26,6 +36,10 @@ function ReviewLine({ api, line, match, index }: { api: Api; line: Line; match: 
   }));
   if (selected) choices.set(selected.product_id, selected);
   const evidence = match.source_quantity;
+  const pricePath = selected && customerCode.trim() && currency.length === 3
+    ? "/order-sources/approved-unit-price?" + new URLSearchParams({
+      customer_code: customerCode.trim(), product_id: String(selected.product_id), currency,
+    }) : null;
   const initialQuantity = evidence && selected
     && [evidence.normalized_unit, evidence.unit.toLowerCase()].includes(selected.unit.toLowerCase())
     && /^\d+(?:\.0+)?$/.test(evidence.quantity) && Number(evidence.quantity) >= 1
@@ -48,7 +62,7 @@ function ReviewLine({ api, line, match, index }: { api: Api; line: Line; match: 
     <label>Confirmed quantity {selected && `(${selected.unit})`}<input type="number" required min="1" max="10000000"
       name={`quantity-${index}`} key={selected?.product_id ?? "none"}
       step="1" defaultValue={initialQuantity} /></label>
-    <label>Unit price<input name={`price-${index}`} type="number" required min="0" step="0.0001" /></label>
+    <PriceField key={JSON.stringify([customerCode, selected?.product_id, currency])} api={api} path={pricePath} index={index} />
     <label>Specification<input name={`spec-${index}`} defaultValue={line.specification ?? ""} /></label>
     <label>Customization notes<input name={`notes-${index}`} defaultValue={line.customization_notes ?? ""} /></label>
   </fieldset>;
@@ -60,6 +74,8 @@ export function ProposalReview({ api }: { api: Api }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [orderId, setOrderId] = useState<number | null>(null);
+  const [customerCode, setCustomerCode] = useState("");
+  const [currency, setCurrency] = useState("IDR");
   const [sourceId, setSourceId] = useState("");
   const [duplicate, setDuplicate] = useState(false);
   const [queueRevision, setQueueRevision] = useState(0);
@@ -85,6 +101,7 @@ export function ProposalReview({ api }: { api: Api }) {
       const original = await api<Source>(path + "/extract-text", { method: "POST" });
       setSource(original);
       const result = await api<Proposal>(path + "/extract-order", { method: "POST" });
+      setCustomerCode(result.validated_output?.customer?.code ?? ""); setCurrency("IDR");
       setQueueRevision(r => r + 1); setProposal(result); setOrderId(result.confirmed_order_id); setError(result.error_message ?? "");
     } catch (err) { setError(errorMessage(err)); }
     finally { setBusy(false); }
@@ -146,15 +163,15 @@ export function ProposalReview({ api }: { api: Api }) {
       {source.original_filename && <button onClick={download}>Download {source.original_filename}</button>}
       <pre>{source.raw_text}</pre></section>
       {output && proposal?.line_matches && !orderId && <form className="panel" onSubmit={confirm}><h2>Review proposal</h2>
-        <fieldset disabled={busy}><label>Customer code<input name="code" required defaultValue={output.customer?.code ?? ""} /></label>
+        <fieldset disabled={busy}><label>Customer code<input name="code" required value={customerCode} onChange={e => setCustomerCode(e.target.value)} /></label>
           {customerFields.map(k => <label key={k}>{k.replaceAll("_", " ")}<input name={k}
             defaultValue={(k === "name" && proposal.review_headers ? proposal.review_headers.customer_name : output.customer?.[k]) ?? ""} /></label>)}
           {proposal.review_headers?.check_po && <p className="notice">Check the PO number against the original source and enter it before confirmation.</p>}
           <label>PO number<input name="po" required={proposal.review_headers?.check_po}
             defaultValue={(proposal.review_headers ? proposal.review_headers.po_number : output.customer_po_number) ?? ""} /></label>
           <label>Delivery date<input type="date" name="date" defaultValue={output.requested_delivery_date ?? ""} /></label>
-          <label>Currency<input name="currency" required pattern="[A-Z]{3}" placeholder="SGD" /></label>
-          {output.lines.map((line, i) => <ReviewLine key={i} api={api} line={line} match={proposal.line_matches![i]} index={i} />)}
+          <label>Currency<input name="currency" required pattern="[A-Z]{3}" value={currency} onChange={e => setCurrency(e.target.value)} /></label>
+          {output.lines.map((line, i) => <ReviewLine key={i} api={api} line={line} match={proposal.line_matches![i]} index={i} customerCode={customerCode} currency={currency} />)}
           {duplicate && <label><input type="checkbox" name="acknowledge" required />I reviewed the possible duplicate.</label>}
           <button className="primary" disabled={!output.lines.length}>Confirm order and reserve stock</button>
         </fieldset></form>}</div>}
