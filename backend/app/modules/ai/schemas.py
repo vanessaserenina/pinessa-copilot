@@ -45,6 +45,7 @@ class MatchCandidate(BaseModel):
 
 
 class SourceQuantity(BaseModel):
+    source_clause: str
     quantity: str
     unit: str
     normalized_unit: str
