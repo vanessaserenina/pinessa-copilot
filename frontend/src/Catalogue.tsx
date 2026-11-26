@@ -52,7 +52,7 @@ export function Catalogue({ api, revision }: { api: Api; revision: number }) {
           <details>
             <summary>More filters</summary>
             <div className="extra-filters">
-              <label>Source<select name="source"><option value="">All sources</option><option value="catalogue">Catalogue</option><option value="synthetic">Synthetic</option></select></label>
+              <label>Source<select name="source"><option value="">All sources</option><option value="catalogue">Catalogue</option><option value="synthetic">Sample records</option></select></label>
               <label>Section code<input name="section" maxLength={80} /></label>
               <label>Group code<input name="group" maxLength={80} /></label>
               <label className="checkbox-label"><input type="checkbox" name="include_inactive" value="true" /> Include inactive</label>
@@ -78,7 +78,7 @@ export function Catalogue({ api, revision }: { api: Api; revision: number }) {
               <td><strong>{product.name}</strong>{!product.is_active && <small className="cell-note">Inactive</small>}</td>
               <td><ProductType product={product} /></td>
               <td>{product.category_name}{product.section_name !== product.category_name && <small className="cell-note">{product.section_name}</small>}</td>
-              <td>{product.has_active_bom ? <span className="badge active">Active</span> : <span className="muted">—</span>}</td>
+              <td>{product.has_active_bom ? <span className="badge active">Active</span> : <span className="muted">None</span>}</td>
             </tr>)}</tbody>
           </table>
         </div>}

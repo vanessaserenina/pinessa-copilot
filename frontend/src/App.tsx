@@ -7,12 +7,13 @@ import { Dashboard } from "./Dashboard";
 import { ProposalReview } from "./ProposalReview";
 import { ManualOrders } from "./ManualOrders";
 import { ProductDetailScreen } from "./ProductDetailScreen";
+import pinessaLogo from "./assets/pinessa-logo-dark.png";
 import "./App.css";
 
 const SESSION_KEY = "pinessa.accessToken";
 
 function Brand() {
-  return <div className="brand"><span className="brand-mark" aria-hidden="true">P</span><span>Pinessa<small>Order-to-delivery</small></span></div>;
+  return <img className="brand" src={pinessaLogo} width="340" height="112" alt="Pinessa — excellent things starts here" />;
 }
 
 function Login({ notice, onLogin }: { notice: string; onLogin: (token: string, user: User) => void }) {
@@ -61,6 +62,7 @@ function productFromHash() {
 }
 
 function Workspace({ user, api, onSignOut }: { user: User; api: Api; onSignOut: () => void }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const [productId, setProductId] = useState(productFromHash);
   const [route, setRoute] = useState(window.location.hash);
   const canManageOrders = ["sales", "admin"].includes(user.role);
@@ -83,10 +85,11 @@ function Workspace({ user, api, onSignOut }: { user: User; api: Api; onSignOut: 
     <div className="workspace">
       <aside className="sidebar">
         <Brand />
-        <nav aria-label="Main navigation">
+        <button type="button" className="menu-toggle" aria-expanded={menuOpen} aria-controls="workspace-nav" onClick={() => setMenuOpen(!menuOpen)}>Menu</button>
+        <nav id="workspace-nav" className={menuOpen ? "open" : ""} aria-label="Main navigation" onClick={() => setMenuOpen(false)}>
           <a href="#/dashboard" aria-current={showDashboard ? "page" : undefined}>Dashboard</a>
-          <a href="#/products" aria-current={productId || showOrders || showReview || showDashboard ? undefined : "page"}>
-            <span className="catalogue-icon" aria-hidden="true" /> Catalogue
+          <a href="#/products" aria-current={showOrders || showReview || showDashboard ? undefined : "page"}>
+            Catalogue
           </a>
           {canManageOrders && <a href="#/orders" aria-current={showOrders ? "page" : undefined}>Orders</a>}
           {canManageOrders && <a href="#/review" aria-current={showReview ? "page" : undefined}>Order intake</a>}
@@ -96,7 +99,7 @@ function Workspace({ user, api, onSignOut }: { user: User; api: Api; onSignOut: 
         <header className="topbar">
           <span className="topbar-title">{showDashboard ? "Operations" : showOrders || showReview ? "Order workspace" : "Product workspace"}</span>
           <div className="account">
-            <div className="account-name"><strong>{user.full_name}</strong><small>{user.role}</small></div>
+            <div className="account-name"><strong>{user.full_name.replace(/^TEST (.+) \(SYNTHETIC\)$/, "$1")}</strong><small>{user.role}</small></div>
             <button className="secondary" onClick={onSignOut}>Sign out</button>
           </div>
         </header>

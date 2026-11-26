@@ -47,7 +47,6 @@ function ReviewLine({ api, line, match, index, customerCode, currency }: {
   return <fieldset><legend>Line {index + 1}</legend>
     <p>{evidence?.source_clause ?? line.requested_text}</p>
     {line.stated_sku && <p>{line.stated_sku}</p>}
-    <p>{evidence ? `Requested quantity: ${evidence.quantity} ${evidence.unit}` : "Check the source and enter the quantity agreed with the customer."}</p>
     {match.reason && <p className="notice">{match.reason}</p>}
     <label>Search catalogue<input value={search} onChange={e => setSearch(e.target.value)} maxLength={100} /></label>
     {found.error && <p role="alert">{found.error}</p>}
@@ -59,6 +58,7 @@ function ReviewLine({ api, line, match, index, customerCode, currency }: {
     {selected?.attributes && Object.keys(selected.attributes).length > 0 && <dl>
       {Object.entries(selected.attributes).map(([key, value]) => <div className="dashboard-count" key={key}>
         <dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl>}
+    <p>{evidence ? `Requested quantity: ${evidence.quantity} ${evidence.unit}` : "Check the source and enter the quantity agreed with the customer."}</p>
     <label>Confirmed quantity {selected && `(${selected.unit})`}<input type="number" required min="1" max="10000000"
       name={`quantity-${index}`} key={selected?.product_id ?? "none"}
       step="1" defaultValue={initialQuantity} /></label>
@@ -139,12 +139,12 @@ export function ProposalReview({ api }: { api: Api }) {
     finally { setBusy(false); }
   }
 
-  return <section><h1>Order intake</h1>
-    <form className="panel" onSubmit={e => load(e, false)}><fieldset disabled={busy}>
+  return <section className="intake"><h1>Order intake</h1>
+    <div className="intake-tools"><form className="intake-upload" onSubmit={e => load(e, false)}><fieldset disabled={busy}>
       <label>Order message<textarea name="text" /></label>
       <label>Order file<input type="file" name="file" accept=".pdf,.xlsx,.csv,.png,.jpg,.jpeg" /></label>
-      <button>Extract proposal</button></fieldset></form>
-    <form className="actions" onSubmit={e => load(e, true)}>
+      <button className={source ? "secondary" : "primary"}>Extract proposal</button></fieldset></form>
+    <form className="intake-queue" onSubmit={e => load(e, true)}>
       <label>Awaiting review<select value={pending.data?.includes(Number(sourceId)) ? sourceId : ""}
         onChange={e => setSourceId(e.target.value)}>
         <option value="">Select a source</option>
@@ -155,14 +155,14 @@ export function ProposalReview({ api }: { api: Api }) {
         onClick={() => setQueuePages([...queuePages, nextCursor])}>Next page</button>}
       {pending.error && <span role="alert">{pending.error} <button type="button" onClick={pending.retry}>Retry queue</button></span>}
       <label>Existing source number<input type="number" min="1" required value={sourceId} onChange={e => setSourceId(e.target.value)} /></label>
-      <button disabled={busy}>Open source</button></form>
+      <button disabled={busy}>Open source</button></form></div>
     {busy && <p role="status">Processing…</p>}
     {error && <p className="error" role="alert">{error}</p>}
     {orderId && <p role="status">Confirmed order #{orderId}. <a href="#/orders">View orders</a></p>}
-    {source && <div className="proposal-review"><section className="panel"><h2>Source #{source.id}</h2>
+    {source && <div className="proposal-review"><section className="source-pane"><h2>Source #{source.id}</h2>
       {source.original_filename && <button onClick={download}>Download {source.original_filename}</button>}
       <pre>{source.raw_text}</pre></section>
-      {output && proposal?.line_matches && !orderId && <form className="panel" onSubmit={confirm}><h2>Review proposal</h2>
+      {output && proposal?.line_matches && !orderId && <form className="review-pane" onSubmit={confirm}><h2>Review proposal</h2>
         <fieldset disabled={busy}><label>Customer code<input name="code" required value={customerCode} onChange={e => setCustomerCode(e.target.value)} /></label>
           {customerFields.map(k => <label key={k}>{k.replaceAll("_", " ")}<input name={k}
             defaultValue={(k === "name" && proposal.review_headers ? proposal.review_headers.customer_name : output.customer?.[k]) ?? ""} /></label>)}
