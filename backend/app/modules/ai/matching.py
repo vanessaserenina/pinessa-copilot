@@ -59,7 +59,7 @@ def variant_issue(line: RequestedLine, phrase: str, product: Product, alias: str
         return "Customization requires review."
     requested_unit = UNITS.get(normalize(line.unit))
     selling_unit = UNITS.get(normalize(product.unit_of_measure))
-    if {requested_unit, selling_unit} == {"box", "case"}:
+    if requested_unit and selling_unit and requested_unit != selling_unit:
         return f"Requested unit ({requested_unit}) differs from the catalogue selling unit ({selling_unit})."
     attrs = " ".join(str(value) for value in product.attributes.values())
     supported = set(words(f"{product.name} {attrs} {alias}").split())
@@ -135,7 +135,11 @@ def match_lines(db: Session, lines: list[RequestedLine]) -> list[dict]:
             elif len(ranked) > 1 and ranked[1][0] == priority:
                 reason = "Multiple catalogue products match."
             else:
-                reason = variant_issue(line, phrase, product, phrase if method == "alias" else "")
+                # An explicit SKU wins ranking, but its own approved wording still
+                # explains the description. A family nickname cannot justify a SKU.
+                product_alias = phrase in aliases.get((product.id, None), ())
+                alias = phrase if method == "alias" or product_alias else ""
+                reason = variant_issue(line, phrase, product, alias)
                 if reason is None:
                     selected = product.id
         candidates = [

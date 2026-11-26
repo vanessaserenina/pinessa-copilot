@@ -56,3 +56,20 @@ def test_similar_catalogue_routes(migrated_db):
     }))
     assert all(row["route_correct"] for row in rows), [
         case["id"] for case, row in zip(cases, rows, strict=True) if not row["route_correct"]]
+
+def test_stated_sku_checks_its_own_approved_wording(db, new_product):
+    product = new_product(unit="box")
+    product.name = "Desk supplies"
+    product.attributes = {"colour": "blue", "pack": "pack of 12"}
+    nickname = "office bundle blue pack of 12"
+    db.add(ProductAlias(product_id=product.id, alias_text=nickname,
+                        alias_normalized=normalize(nickname), status="approved"))
+    db.flush()
+
+    def line(description, unit="box"):
+        return RequestedLine(requested_text=description, stated_sku=product.sku, quantity="2",
+                             unit=unit, specification=None, customization_notes=None)
+
+    matches = match_lines(db, [line(nickname), line(nickname.replace("blue", "red")),
+                               line(nickname.replace("12", "24")), line(nickname, "piece")])
+    assert [match["selected_product_id"] for match in matches] == [product.id, None, None, None]
