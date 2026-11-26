@@ -163,6 +163,7 @@ def test_structured_proposal_from_stored_text(client, db, source, mock_llm):
 @pytest.mark.parametrize(("case_name", "corrected", "invented_sku"), [
     ("text-only", True, None), ("unknown-sku", True, None),
     ("approved-alias", True, "desk fasteners"), ("approved-alias", False, "desk fasteners"),
+    ("approved-alias", True, "STK-FAST-001"), ("approved-alias", False, "STK-FAST-001"),
     ("approved-alias", True, "null"), ("approved-alias", False, "null")])
 def test_observed_pilot_errors_get_a_source_based_retry(case_name, corrected, invented_sku, client, db, make_user,
                                                         headers_for, mock_llm, new_product, monkeypatch, tmp_path):

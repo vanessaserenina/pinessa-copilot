@@ -65,7 +65,7 @@ function OrderForm({ api, order, onSaved }: { api: Api; order?: Order; onSaved: 
     finally { setBusy(false); }
   }
 
-  return <form className="panel" onSubmit={save}>
+  return <form className="panel manual-form" onSubmit={save}>
     <h2>{order ? `Order #${order.id}` : "New order"}</h2>
     {order && <p role="status">{order.status.replaceAll("_", " ")} · Revision {order.revision} · Subtotal {order.currency} {decimalText(order.subtotal)}</p>}
     <fieldset disabled={busy} onChange={changed}>
@@ -74,7 +74,7 @@ function OrderForm({ api, order, onSaved }: { api: Api; order?: Order; onSaved: 
       <label>Requested delivery date<input name="requested_delivery_date" type="date" defaultValue={order?.requested_delivery_date ?? ""} /></label>
       <label>Currency<input name="currency" required pattern="[A-Za-z]{3}" maxLength={3} placeholder="SGD" defaultValue={order?.currency} /></label>
       <h3>Order lines</h3>
-      {lines.map((line, index) => <div className="actions" key={index}>
+      {lines.map((line, index) => <div className="order-line" key={index}>
         <ProductLabel api={api} id={line.product_id} />
         <label>Quantity<input type="number" min={1} max={10000000} required value={line.quantity || ""}
           onChange={e => setLines(lines.map((v, i) => i === index ? { ...v, quantity: Number(e.target.value) } : v))} /></label>
@@ -92,9 +92,13 @@ function OrderForm({ api, order, onSaved }: { api: Api; order?: Order; onSaved: 
       {order && <label>Reason for edit<input name="reason" required maxLength={500} /></label>}
     </fieldset>
     {order?.stock && <section><h3>Stock at confirmation or last edit</h3>
-      {[...order.stock.finished_goods, ...order.stock.components].map(n => <p key={n.product_id}>
-        <ProductLabel api={api} id={n.product_id} /> · {decimalText(n.from_stock)} reserved · {decimalText(n.shortfall)} short
-      </p>)}</section>}
+      <div className="table-scroll"><table>
+        <thead><tr><th scope="col">Product</th><th scope="col" className="numeric">Reserved</th><th scope="col" className="numeric">Shortfall</th></tr></thead>
+        <tbody>{[...order.stock.finished_goods, ...order.stock.components].map(n =>
+          <tr key={n.product_id}><td><ProductLabel api={api} id={n.product_id} /></td>
+            <td className="numeric">{decimalText(n.from_stock)}</td><td className="numeric">{decimalText(n.shortfall)}</td></tr>
+        )}</tbody>
+      </table></div></section>}
     {error && <p className="error" role="alert">{error}</p>}
     {duplicate && <label><input type="checkbox" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)} /> I reviewed the possible duplicate.</label>}
     <div className="actions">

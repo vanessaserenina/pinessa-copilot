@@ -1,27 +1,16 @@
-:root {
-  font-family: Inter, "Segoe UI", system-ui, sans-serif;
-  color: #172b42;
-  background: #f4f7fb;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  --ink: #172b42;
-  --muted: #526780;
-  --line: #dce5ef;
-  --surface: #fff;
-  --accent: #215ca7;
-  --accent-dark: #164680;
-}
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Wayfind (by request) · redesign: full
+ * nav: role-aware sidebar · signature: source beside confirmed order lines · states: pending, empty, error, confirmed · wayfind: platform
+ * axes: light/mono/cool · posture: committed · v2.0.0 */
+/* Hallmark · pre-emit critique: dense records need quieter dividers than the main action. */
+@import "@fontsource/chivo-mono/latin-400.css";
+@import "@fontsource/chivo-mono/latin-500.css";
+@import "@fontsource/chivo-mono/latin-800.css";
+@import "./tokens.css";
+@import "./base.css";
 
-*, *::before, *::after { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; }
-h1, h2, h3, p, dl, dd { margin: 0; }
-h1 { font-size: clamp(1.8rem, 4vw, 2.5rem); line-height: 1.15; letter-spacing: -.038em; }
-h2 { font-size: 1.17rem; letter-spacing: -.016em; }
-h3 { font-size: 1rem; }
-p { line-height: 1.55; }
-a { color: var(--accent-dark); text-underline-offset: .2em; }
-button, input, textarea, select { font: inherit; }
+body { min-width: 320px; font-variant-numeric: tabular-nums; }
+dl, dd { margin: 0; }
+a { color: var(--color-accent); }
 button, summary { cursor: pointer; }
-button:disabled { cursor: default; opacity: .55; }
-:focus-visible { outline: 3px solid #6da9f1; outline-offset: 3px; }
+button:disabled { cursor: not-allowed; opacity: .6; }
+button:active:not(:disabled) { transform: translateY(1px); }

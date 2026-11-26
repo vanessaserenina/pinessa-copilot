@@ -90,7 +90,8 @@ def correction(db: Session, source: OrderSource, order: StructuredOrder) -> tupl
         return None
     sku = normalize(line.stated_sku)
     unstated_null = sku == "null" and not re.search(r"\bnull\b", text, re.I)
-    if sku != phrase and not unstated_null:
+    absent_code = line.stated_sku.casefold() not in text.casefold()
+    if sku != phrase and not unstated_null and not absent_code:
         return None
     if not source_quantities(text, [line])[0]:
         return None
@@ -114,4 +115,6 @@ def correction(db: Session, source: OrderSource, order: StructuredOrder) -> tupl
                 del values[field]
         hint += " Use JSON null for absent specification and customization notes as well."
     preserve_fields(schema["$defs"]["RequestedLine"]["properties"], values, "stated_sku")
+    if absent_code and sku != phrase and not unstated_null:
+        schema["$defs"]["RequestedLine"]["properties"]["stated_sku"] = {"type": "null"}
     return hint, schema

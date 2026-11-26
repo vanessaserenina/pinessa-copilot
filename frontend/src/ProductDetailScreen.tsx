@@ -113,7 +113,7 @@ export function ProductDetailScreen({ id, api, isAdmin, onBomChange }: {
       <dl className="panel metadata">
         <div><dt>Family</dt><dd>{product.family_name}</dd></div>
         <div><dt>Unit</dt><dd>{product.unit_of_measure}</dd></div>
-        <div><dt>Source</dt><dd className="capitalize">{product.source}</dd></div>
+        <div><dt>Source</dt><dd className="capitalize">{product.source === "catalogue" ? "Catalogue" : "Sample records"}</dd></div>
         <div><dt>Custom orders</dt><dd>{product.is_custom_allowed ? "Allowed" : "Unavailable"}</dd></div>
         {product.product_type === "COMPONENT" && <div><dt>Used in active BOMs</dt><dd>{product.used_in_active_boms}</dd></div>}
       </dl>
@@ -141,7 +141,6 @@ export function ProductDetailScreen({ id, api, isAdmin, onBomChange }: {
               </select></label>
               {bom && <div className="version-meta"><span className={`badge ${bom.status}`}>{bom.status}</span>
                 {bom.effective_from && <span>Effective {bom.effective_from}</span>}
-                {bom.is_synthetic && <span>Synthetic BOM</span>}
               </div>}
               {bom?.notes && <p className="bom-notes">{bom.notes}</p>}
               {isAdmin && version.status === "draft" && !action && !editing && <div className="actions">
