@@ -51,6 +51,7 @@ def source_quantities(text: str, lines: list[RequestedLine], source_type: str = 
             continue
         # A PO header can introduce the actual order after a colon.
         clause = re.sub(r"^.*\bPO\s+[\w-]+:\s*", "", clause, flags=re.I)
+        clause = re.sub(r"^Please send\s+", "", clause, flags=re.I)
         name, sku = identity(clause)
         quantity = None if pack_heading or PACK_SIZE.search(clause) else PREFIX.match(clause)
         clauses[PACK_SUFFIX.sub("", name)].append((name, sku, quantity, clause))

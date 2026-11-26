@@ -65,6 +65,7 @@ class CustomerPriceTier(Base):
     __tablename__ = "customer_price_tiers"
 
     customer_code: Mapped[str] = mapped_column(String(80), primary_key=True)
+    customer_name: Mapped[str | None] = mapped_column(String(250))
     tier: Mapped[str] = mapped_column(String(80))
 
 

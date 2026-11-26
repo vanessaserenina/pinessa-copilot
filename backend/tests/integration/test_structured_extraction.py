@@ -115,7 +115,7 @@ def test_review_headers_preserve_reply(client, db, source, mock_llm, kind, text,
     for response in (client.post(url + "/extract-order", headers=headers),
                      client.get(url + "/extraction", headers=headers)):
         proposal = response.json()
-        assert proposal["review_headers"] == {"customer_name": name, "po_number": po,
+        assert proposal["review_headers"] == {"customer_name": name, "customer_code": None, "po_number": po,
                                                "check_po": check_po}
         assert proposal["validated_output"] == wrong
         assert db.get(AIExtraction, proposal["id"]).raw_output[0] == raw
@@ -706,3 +706,35 @@ def test_unconfirmable_proposal_routes_to_manual_handling(client, source, mock_l
     assert client.get("/api/order-sources/pending-review", headers=headers).json() == []
     assert client.get("/api/order-sources/failed-extractions", headers=headers).json() == [reply["order_source_id"]]
     assert client.post(url + "/extract-order", headers=headers).json() == reply and len(calls) == 1
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_shadow_order_customer_and_quantity(client, db, headers_for, make_user, mock_llm, monkeypatch, ambiguous):
+    from app.modules.orders.models import CustomerPriceTier
+
+    description = "8 boxes of paket penutup kepala kotak individual / polos box 100 set"
+    sku = "KIT-SHOWER-CAP-KTK-NLOGO-BX100"
+    name = "Hotel Gantari Utama"
+    po = "SHADOW-001"
+    original = "\r\n".join(["Hello Pinessa,", "", f"Customer: {name}", f"PO number: {po}",
+                            "Requested delivery date: 27 November 2026", "", f"Please send {description}.",
+                            f"SKU: {sku}", "", "Thank you."])
+    for code in (["CUS-0270", "CUS-0271"] if ambiguous else ["CUS-0270"]):
+        db.add(CustomerPriceTier(customer_code=code, customer_name=name, tier="Hotel Standard"))
+    db.commit()
+    monkeypatch.setattr(settings, "llm_model", "test")
+    raw = json.dumps(dict(EXPECTED, customer=dict(EXPECTED["customer"], name=name, code=po),
+                          customer_po_number=po, requested_delivery_date="2026-11-27",
+                          lines=[dict(EXPECTED["lines"][0], requested_text=description, stated_sku=sku,
+                                      quantity="8", unit="box")]))
+    mock_llm(("stop", raw))
+    headers = headers_for(make_user("sales"))
+    saved = client.post("/api/order-sources", data={"text": original}, headers=headers).json()
+    path = f"/api/order-sources/{saved['id']}"
+    assert client.post(path + "/extract-text", headers=headers).status_code == 200
+    proposal = client.post(path + "/extract-order", headers=headers).json()
+    assert proposal["review_headers"]["customer_code"] == (None if ambiguous else "CUS-0270")
+    assert proposal["review_headers"]["po_number"] == po
+    assert proposal["line_matches"][0]["source_quantity"]["quantity"] == "8"
+    extraction = db.get(AIExtraction, proposal["id"])
+    assert extraction.raw_output == [raw]
+    assert db.get(OrderSource, saved["id"]).raw_text == original

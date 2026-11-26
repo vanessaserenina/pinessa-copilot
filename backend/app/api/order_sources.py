@@ -145,6 +145,15 @@ def review_output(db: Session, extraction: AIExtraction) -> ExtractionOut:
     if output.validated_output and output.line_matches:
         source = db.get(OrderSource, extraction.order_source_id)
         output.review_headers = review_headers(source.source_type, source.raw_text or "", output.validated_output)
+        headers = output.review_headers
+        supplied = output.validated_output.customer
+        codes = db.scalars(select(CustomerPriceTier.customer_code).where(
+            func.lower(CustomerPriceTier.customer_name) == (headers.customer_name or "").strip().lower()
+        ).limit(2)).all()
+        if len(codes) == 1 and headers.customer_name and headers.customer_name.casefold() in (source.raw_text or "").casefold():
+            headers.customer_code = codes[0]
+        elif not codes and supplied and supplied.code and supplied.code != headers.po_number and supplied.code in (source.raw_text or ""):
+            headers.customer_code = supplied.code
         evidence = source_quantities(source.raw_text or "", output.validated_output.lines, source.source_type)
         for match, quantity in zip(output.line_matches, evidence, strict=True):
             match.source_quantity = SourceQuantity(**quantity) if quantity else None
