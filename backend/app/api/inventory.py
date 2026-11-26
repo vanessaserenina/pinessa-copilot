@@ -6,6 +6,7 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.modules.audit.service import record_audit_event
 from app.modules.auth.dependencies import require_permission
 from app.modules.auth.models import User
 from app.modules.inventory.models import QUANTITY_PRECISION, QUANTITY_SCALE, Inventory, Reservation
@@ -47,9 +48,15 @@ def balance(product_id: int, db: Session = Depends(get_db),
 
 @router.post("/{product_id}/receipts", response_model=BalanceOut)
 def receive(product_id: int, units: Units, db: Session = Depends(get_db),
-            _: User = Depends(require_permission("inventory:receive"))):
-    validate_quantity(get_product(db, product_id), units.quantity)
+            actor: User = Depends(require_permission("inventory:receive"))):
+    product = get_product(db, product_id)
+    validate_quantity(product, units.quantity)
     available = add_stock(db, product_id, units.quantity)
+    # The atomic increment returns this receipt's balance even under concurrent writes.
+    record_audit_event(db, action="inventory.received", entity_type="inventory",
+                       entity_id=product_id, actor_user_id=actor.id,
+                       before={"available": available - units.quantity}, after={"available": available},
+                       detail={"sku": product.sku, "quantity": units.quantity, "unit": product.unit_of_measure})
     db.commit()
     return {"product_id": product_id, "available": available}
 

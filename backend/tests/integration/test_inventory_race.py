@@ -10,12 +10,34 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.main import app
+from app.modules.audit.models import AuditEvent
 from app.modules.inventory.models import Reservation
 
 
 @pytest.fixture()
 def db(migrated_db):
     return migrated_db
+
+
+def test_receipts_record_warehouse_actor_and_balance_changes(client, db, make_user, headers_for, new_product):
+    product = new_product(unit="g")
+    warehouse = make_user("warehouse")
+    headers = headers_for(warehouse)
+    path = f"/api/inventory/{product.id}/receipts"
+    for quantity in ("5.1250", "0.2500"):
+        assert client.post(path, headers=headers, json={"quantity": quantity}).status_code == 200
+    assert client.post(path, headers=headers, json={"quantity": 0}).status_code == 422
+
+    receipts = db.scalars(select(AuditEvent).where(AuditEvent.action == "inventory.received")
+                          .order_by(AuditEvent.id)).all()
+    assert len(receipts) == 2
+    for receipt, (quantity, before, after) in zip(receipts, [
+        ("5.1250", "0.0000", "5.1250"), ("0.2500", "5.1250", "5.3750"),
+    ], strict=True):
+        assert (receipt.actor_user_id, receipt.entity_type, receipt.entity_id) == (warehouse.id, "inventory", product.id)
+        assert receipt.detail == {"sku": product.sku, "quantity": quantity, "unit": "g"}
+        assert receipt.before == {"available": before}
+        assert receipt.after == {"available": after}
 
 
 @pytest.mark.parametrize(("quantity", "unit"), [(3, "pcs"), ("0.3334", "g")])
