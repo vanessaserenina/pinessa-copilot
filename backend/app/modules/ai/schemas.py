@@ -65,6 +65,7 @@ class LineMatch(BaseModel):
 
 
 class ReviewHeaders(BaseModel):
+    customer_code: str | None = None
     customer_name: str | None
     po_number: str | None
     check_po: bool = False

@@ -10,7 +10,7 @@ type Candidate = { product_id: number; sku: string; name: string; unit: string; 
 type Match = { source_quantity: { quantity: string; unit: string; normalized_unit: string; source_clause: string } | null;
   selected_product_id: number | null; reason: string | null; candidates: Candidate[] };
 type Proposal = { confirmed_order_id: number | null; error_message: string | null; line_matches: Match[] | null;
-  review_headers?: { customer_name: string | null; po_number: string | null; check_po: boolean } | null;
+  review_headers?: { customer_code?: string | null; customer_name: string | null; po_number: string | null; check_po: boolean } | null;
   validated_output: { customer: Record<string, string | null> | null; customer_po_number: string | null;
     requested_delivery_date: string | null; lines: Line[] } | null };
 const customerFields = ["name", "contact_name", "email", "phone", "delivery_address"];
@@ -101,7 +101,7 @@ export function ProposalReview({ api }: { api: Api }) {
       const original = await api<Source>(path + "/extract-text", { method: "POST" });
       setSource(original);
       const result = await api<Proposal>(path + "/extract-order", { method: "POST" });
-      setCustomerCode(result.validated_output?.customer?.code ?? ""); setCurrency("IDR");
+      setCustomerCode(result.review_headers?.customer_code ?? ""); setCurrency("IDR");
       setQueueRevision(r => r + 1); setProposal(result); setOrderId(result.confirmed_order_id); setError(result.error_message ?? "");
     } catch (err) { setError(errorMessage(err)); }
     finally { setBusy(false); }
