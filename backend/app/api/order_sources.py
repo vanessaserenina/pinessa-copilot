@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from fastapi.responses import FileResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -24,7 +24,8 @@ from app.modules.auth.dependencies import require_permission
 from app.modules.auth.models import User
 from app.modules.orders.extraction import extract_source_text
 from app.modules.orders.intake import receive_source
-from app.modules.orders.models import OrderSource
+from app.modules.orders.models import ApprovedSalesPrice, CustomerPriceTier, OrderSource
+from app.modules.products.models import Product
 
 class OrderSourceRoute(APIRoute):
     def get_route_handler(self):
@@ -117,6 +118,21 @@ def failed_extractions(actor: Manager, db: Database, after_id: Annotated[int, Qu
         (OrderSource.status == "failed_extraction") | OrderSource.id.in_(manual),
         OrderSource.id > after_id,
     ).order_by(OrderSource.id).limit(100)))
+
+
+@router.get("/approved-unit-price")
+def approved_unit_price(customer_code: str, product_id: int, currency: str,
+                        actor: Manager, db: Database) -> str | None:
+    prices = db.scalars(select(ApprovedSalesPrice.unit_price)
+                        .join(Product, Product.id == ApprovedSalesPrice.product_id)
+                        .join(CustomerPriceTier, CustomerPriceTier.tier == ApprovedSalesPrice.tier)
+                        .where(CustomerPriceTier.customer_code == customer_code.strip(),
+                               Product.id == product_id, Product.is_active,
+                               ApprovedSalesPrice.selling_unit == Product.unit_of_measure,
+                               ApprovedSalesPrice.currency == currency,
+                               ApprovedSalesPrice.valid_from <= func.current_date(),
+                               ApprovedSalesPrice.valid_through >= func.current_date()).limit(2)).all()
+    return format(prices[0], "f") if len(prices) == 1 else None
 
 
 @router.post("/{source_id}/extract-text")

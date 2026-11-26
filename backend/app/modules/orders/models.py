@@ -60,3 +60,26 @@ class OrderSource(TimestampMixin, Base):
     content_hash: Mapped[str] = mapped_column(String(64), unique=True)
     submitted_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     status: Mapped[str] = mapped_column(String(20), default="received")
+
+class CustomerPriceTier(Base):
+    __tablename__ = "customer_price_tiers"
+
+    customer_code: Mapped[str] = mapped_column(String(80), primary_key=True)
+    tier: Mapped[str] = mapped_column(String(80))
+
+
+class ApprovedSalesPrice(Base):
+    __tablename__ = "approved_sales_prices"
+    __table_args__ = (
+        CheckConstraint("unit_price >= 0", name="nonnegative_price"),
+        CheckConstraint("valid_through >= valid_from", name="valid_interval"),
+    )
+
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), primary_key=True)
+    tier: Mapped[str] = mapped_column(String(80), primary_key=True)
+    selling_unit: Mapped[str] = mapped_column(String(20), primary_key=True)
+    currency: Mapped[str] = mapped_column(String(3), primary_key=True)
+    book: Mapped[str] = mapped_column(String(120), primary_key=True)
+    valid_from: Mapped[date] = mapped_column(Date)
+    valid_through: Mapped[date] = mapped_column(Date)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(18, 4))
